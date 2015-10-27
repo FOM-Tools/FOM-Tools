@@ -48,7 +48,7 @@ Based on these number it computes a thrashing value. If the value is close to 1 
 
 The following command starts the application and tracks the page status:
 
-    Monitor.py --interval=60 --cgroup=test --directory=testrun --limit=1500M --binary=”/usr/bin/python test.py”
+    Monitor.py --interval=60 --cgroup=test --directory=testrun --limit=1500M --binary="/usr/bin/python testpy"
 
 It takes the following arguments:
 - interval: time to wait in seconds before the next snapshot will be taken. If interval is not set, the script expects SIGUSR
@@ -75,7 +75,7 @@ Some basic analysis workflows are provided and scripts are loacted under FOM-too
      - Red pixel: page in swap
      - Green pixel: page in RAM
      - Grey pixel: page not loaded  
-     - The resolution can lead to problems for standard image viewers: We advise using nip2 in order to load the generated png-file. See further details about nip2 here http://www.vips.ecs.soton.ac.uk/index.php?title=Downloading,_Installation_and_Startup_of_Nip2
+     - The resolution can lead to problems for standard image viewers: We advise using nip2 in order to load the generated png-file. See further details about nip2 here http://www.vips.ecs.soton.ac.uk/index.php?title=VIPS
   -  PlotHistograms.py
      - Analyzes blocks of continuous pages in RAM/Swap/not loaded
      - Plots for each iteration a histogram with the distribution of these blocks (xaxis in logscale)
