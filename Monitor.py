@@ -246,7 +246,6 @@ else:
     getSnapshot()
     print "\tRun process for " + args.interval + " seconds"
     time.sleep(int(args.interval))
-p.join()
 print "Process finished. Perform cleanup and write summary."
 # Clean up
 try: 
@@ -264,4 +263,3 @@ dict ={"Executed Command": args.binary, "Memory Limit": args.limit,
        "Heap Sizes": heapsizes, "Output Files": outputFiles }
 with open('FOMSummary.json', 'w') as fp:
     json.dump(dict, fp)
-
