@@ -48,7 +48,7 @@ Based on these number it computes a thrashing value. If the value is close to 1 
 
 The following command starts the application and tracks the page status:
 
-    Monitor.py --interval=60 --cgroup=test --directory=testrun --limit=1500M --binary="/usr/bin/python testpy"
+    Monitor.py --interval=60 --cgroup=test --directory=testrun --limit=1500M --binary="/usr/bin/python test.py"
 
 It takes the following arguments:
 - interval: time to wait in seconds before the next snapshot will be taken. If interval is not set, the script expects SIGUSR
@@ -85,7 +85,7 @@ Some basic analysis workflows are provided and scripts are loacted under FOM-too
       - Preparing output files:
          -  Merge and sort output files
          -  Map function offsets in the symbol lookup table to sourcelines: This is currently done with eu-addr2line thats is part of the elfutils package.
-      -Actual postprocessing:
+      - Actual postprocessing:
          - Find top10 biggest blocks of continuous pages in swap/RAM/not loaded
          - Get corresponding stacktraces for the 10 biggest blocks in swap. Results are written to separate outputfiles (Hotspot0-Hotspot9)
          - Find number of pages always in RAM and most of the time in swap
