@@ -42,7 +42,7 @@ with open(files[1], "r") as f:
 
 xmax = max*resource.getpagesize() + xmin
 y = len(files)
-print xmax, xmin, files[0]
+
 # Generate Gnuplot script with correct resolution
 cmd = """set terminal png size %d,%d font "/usr/share/fonts/dejavu/DejaVuSansMono.ttf" 
 #set palette defined (1 "red",0 "black", 10 "green")
