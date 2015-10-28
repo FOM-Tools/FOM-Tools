@@ -1,39 +1,26 @@
 cmake_minimum_required (VERSION 2.8)
 project (FOMTools)
+
 set(FOMTOOLS_MAJOR_VERSION 0)
 set(FOMTOOLS_MINOR_VERSION 0)
 set(FOMTOOLS_PATCH_VERSION 1)
 set(FOMTOOLS_VERSION ${FOMTOOLS_MAJOR_VERSION}.${FOMTOOLS_MINOR_VERSION}.${FOMTOOLS_PATCH_VERSION} )
-macro (dump_var arg )
-  message("${arg}=${${arg}}")
-endmacro (dump_var)
 
-set(targets_export_name "${PROJECT_NAME}Targets")
-dump_var("CMAKE_BUILD_TYPE")
-dump_var("CMAKE_CXX_FLAGS")
+#--- enable unit testing capabilities ------------------------------------------
+include(CTest)
+
+#--- massage configure options -------------------------------------------------
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0 -Wall")
+set(CMAKE_VERBOSE_MAKEFILE ON)
+
 if( "${CMAKE_BUILD_TYPE}" STREQUAL "" )
   set(CMAKE_BUILD_TYPE "RelWithDebInfo")
 endif()
-dump_var("CMAKE_GENERATOR_CXX")
-dump_var("CMAKE_CXX_COMPILER")
-dump_var("CMAKE_HOST_UNIX")
-dump_var("CMAKE_SYSTEM")
-dump_var("CMAKE_SYSTEM_NAME")
-dump_var("CMAKE_SYSTEM_PROCESSOR")
-dump_var("CMAKE_SYSTEM_VERSION")
-dump_var("CMAKE_BUILD_TYPE")
-dump_var("CMAKE_CXX_COMPILER_ID")
-dump_var("CMAKE_CXX_COMPILER_ID_RUN")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0 -Wall")
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
   set(COMP "llvm")
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-  # using GCC
-#  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -ftree-vectorize -ftree-vectorizer-verbose=1 ")
   set(COMP "gcc")
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
-  # using Intel C++
-#  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -vec-report=1 ")
   set(COMP "icc")
 endif()
 
@@ -51,15 +38,51 @@ if ( "$ENV{CMTCONFIG}" STREQUAL "")
 else("$ENV{CMTCONFIG}" STREQUAL "")
   set(CMTCONFIG $ENV{CMTCONFIG})
 endif("$ENV{CMTCONFIG}" STREQUAL "")
+
+#--- dump configure options ----------------------------------------------------
+macro (dump_var arg )
+  message("${arg}=${${arg}}")
+endmacro (dump_var)
+dump_var("CMAKE_BUILD_TYPE")
+dump_var("CMAKE_CXX_FLAGS")
+dump_var("CMAKE_GENERATOR_CXX")
+dump_var("CMAKE_CXX_COMPILER")
+dump_var("CMAKE_HOST_UNIX")
+dump_var("CMAKE_SYSTEM")
+dump_var("CMAKE_SYSTEM_NAME")
+dump_var("CMAKE_SYSTEM_PROCESSOR")
+dump_var("CMAKE_SYSTEM_VERSION")
+dump_var("CMAKE_BUILD_TYPE")
+dump_var("CMAKE_CXX_COMPILER_ID")
+dump_var("CMAKE_CXX_COMPILER_ID_RUN")
 dump_var("COMP_VERSION")
 dump_var("CMTCONFIG")
 dump_var("CMAKE_INSTALL_PREFIX")
-set (CMAKE_VERBOSE_MAKEFILE ON)
+
+#--- find dependencies ---------------------------------------------------------
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/cmake/")
+find_package(PythonLibs REQUIRED)
+find_package(Unwind REQUIRED)
+
+
+#--- add version files ---------------------------------------------------------
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/FOMToolsVersion.h
+               ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsVersion.h )
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsVersion.h
+        DESTINATION ${CMAKE_INSTALL_PREFIX}/include/FOMTools )
+
+#--- add license files ---------------------------------------------------------
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/COPYING
+        DESTINATION ${CMAKE_INSTALL_PREFIX})
+
+
+set(targets_export_name "${PROJECT_NAME}Targets")
+
 dump_var("CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT")
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   message("----------------Default install prefix")
   # if( NOT  "$ENV{ATLAS_EXTERNAL}" STREQUAL "")
-  #   set(CMAKE_INSTALL_PREFIX 
+  #   set(CMAKE_INSTALL_PREFIX
   #     $ENV{ATLAS_EXTERNAL}/APE/${APE_VERSION}/${CMTCONFIG} CACHE PATH "Developer install path" FORCE)
   # endif()
 else()
@@ -67,13 +90,13 @@ else()
   if(NOT DEFINED ENV{CMTCONFIG})
     set (CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/")
   else()
-    set (CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/${CMTCONFIG}")    
+    set (CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/${CMTCONFIG}")
   endif()
 endif()
 dump_var("CMAKE_INSTALL_PREFIX")
 dump_var("CMAKE_BINARY_DIR")
+
 include_directories ("${PROJECT_SOURCE_DIR}/" )
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/cmake/")
 SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 find_package(PythonLibs REQUIRED)
 find_package(Unwind REQUIRED)
@@ -86,14 +109,12 @@ src/RegionFinder.cxx src/Parser.cxx src/Addr2Line.cxx)
 add_library(MallocHook SHARED src/mallocinterpose.cxx)
 add_executable(binRecord2txt src/MHbin2txt.cxx)
 add_executable(dumpFileInfo src/dumpCmdline.cxx)
-add_executable(testMallocHook test/test.cxx)
 target_link_libraries(binRecord2txt
   FOMUtils
   rt)
 target_link_libraries(dumpFileInfo
   FOMUtils
   rt)
-target_link_libraries(testMallocHook rt)
 target_link_libraries(MallocHook -lunwind FOMUtils dl rt)
 target_link_libraries(MallocHook ${UNWIND_LIBRARIES} FOMUtils dl rt)
 set_target_properties(MallocHook PROPERTIES LINK_FLAGS "-static-libstdc++ -static-libgcc" )
@@ -107,7 +128,7 @@ python_add_module(FOMTools FOMTools.cxx)
 target_link_libraries(FOMTools FOMUtils)
 
 
-install(TARGETS binRecord2txt FOMUtils MallocHook dumpFileInfo testMallocHook
+install(TARGETS binRecord2txt FOMUtils MallocHook dumpFileInfo
   EXPORT "${targets_export_name}"
   LIBRARY DESTINATION "lib"
   ARCHIVE DESTINATION "lib"
@@ -116,7 +137,7 @@ install(TARGETS binRecord2txt FOMUtils MallocHook dumpFileInfo testMallocHook
 INSTALL_FILES(/python Monitor.py)
 INSTALL_FILES(/python postprocessing/*)
 install(TARGETS PageStatusChecker FOMTools DESTINATION "python")
-install (DIRECTORY FOMTools/ DESTINATION include 
+install (DIRECTORY FOMTools/ DESTINATION include
   PATTERN "*.hpp")
 include(CMakePackageConfigHelpers)
 include(GenerateExportHeader)
@@ -125,15 +146,16 @@ set(LIB_INSTALL_DIR "lib/")
 set(config_install_dir "${LIB_INSTALL_DIR}/cmake/${PROJECT_NAME}")
 set(targets_export_name "${PROJECT_NAME}Targets")
 set(namespace "${PROJECT_NAME}::")
-configure_package_config_file(cmake/FOMToolsConfig.cmake.in 
+
+configure_package_config_file(cmake/FOMToolsConfig.cmake.in
   ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}Config.cmake
   INSTALL_DESTINATION ${config_install_dir}
   PATH_VARS INCLUDE_INSTALL_DIR LIB_INSTALL_DIR)
 write_basic_package_version_file(
-  ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake 
+  ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake
   VERSION "${FOMTOOLS_VERSION}" COMPATIBILITY SameMajorVersion
 )
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsConfig.cmake 
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsConfig.cmake
   ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsConfigVersion.cmake
         DESTINATION ${config_install_dir} )
 install(
@@ -141,3 +163,6 @@ install(
     NAMESPACE "${namespace}"
     DESTINATION "${config_install_dir}"
 )
+
+#--- project specific subdirectories -------------------------------------------
+add_subdirectory(test)
