@@ -47,6 +47,9 @@ find_package(Unwind REQUIRED)
 include_directories ("${PROJECT_SOURCE_DIR}/" )
 include_directories(${PYTHON_INCLUDE_DIRS})
 
+#--- target for Doxygen documentation ------------------------------------------
+include(cmake/FOMToolsDoxygen.cmake)
+
 #--- add version files ---------------------------------------------------------
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/FOMToolsVersion.h
                ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsVersion.h )
