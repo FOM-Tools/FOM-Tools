@@ -22,7 +22,7 @@
 
 import os
 import sys
-import FOMTools 
+from FOMTools import FOMTools 
 import json
 from subprocess import Popen, call, PIPE
 import numpy

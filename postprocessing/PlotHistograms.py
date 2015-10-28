@@ -21,7 +21,7 @@
 # Generate statistics about continous blocks of pages in RAM/Swap/not loaded
 # and plot histograms 
 
-import FOMTools 
+from FOMTools import FOMTools 
 from subprocess import Popen, call, PIPE
 import os
 import numpy

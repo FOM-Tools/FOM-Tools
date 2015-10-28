@@ -24,7 +24,7 @@
 import os
 import argparse 
 import sys
-import PageStatusChecker 
+from FOMTools import PageStatusChecker 
 import time
 import shlex
 import signal
@@ -120,7 +120,16 @@ call(cmd, shell=True)
 try:
   environment = os.environ.copy()
   fdir = os.path.dirname(os.path.realpath(__file__))[:-6]
-  environment['LD_PRELOAD'] = os.path.join(fdir + "lib/libMallocHook.so")
+  if os.environ.has_key("LD_LIBRARY_PATH") :
+      for path in os.environ["LD_LIBRARY_PATH"].split(":"):
+          if os.path.isfile(path+"/libMallocHook.so"):
+              lmpath=path
+              break
+          
+  else:
+      print "Cannot find libMallocHook.so. please add its path to LD_LIBRARY_PATH envionment"
+      sys.exit()
+  environment['LD_PRELOAD'] = lmpath+"/libMallocHook.so"
   cmd = shlex.split(args.binary)
   fd = open("output", "w")
   p = Popen(cmd, env=environment,  stdout=fd, stderr=fd)
