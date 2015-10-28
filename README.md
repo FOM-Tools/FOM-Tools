@@ -14,8 +14,9 @@ Requirements:
 
 How to configure and install:
 
-    mkdir ../build
-    cd ../build
+    git clone ssh://git@gitlab.cern.ch:7999/fom/FOM-tools.git
+    mkdir build
+    cd build
     cmake -DCMAKE_CXX_COMPILER=$(which g++) -DCMAKE_C_COMPILER=$(which gcc) ../FOM-tools -DCMAKE_INSTALL_PREFIX=${PWD}/../install
     make
     make install
