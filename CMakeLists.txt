@@ -83,6 +83,8 @@ INSTALL(FILES Monitor.py
   GROUP_READ GROUP_EXECUTE 
   WORLD_READ WORLD_EXECUTE
   DESTINATION "bin")
+FILE(WRITE __init__.py "#FOMTools init file")
+INSTALL(FILES __init__.py DESTINATION "python/FOMTools" )
 install(TARGETS PageStatusChecker FOMTools DESTINATION "python/FOMTools")
 install (DIRECTORY FOMTools/ DESTINATION include/FOMTools 
   PATTERN "*.hpp")

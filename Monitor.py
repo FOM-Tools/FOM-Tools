@@ -24,7 +24,7 @@
 import os
 import argparse 
 import sys
-import PageStatusChecker 
+from FOMTools import PageStatusChecker 
 import time
 import shlex
 import signal
@@ -120,8 +120,7 @@ call(cmd, shell=True)
 try:
   environment = os.environ.copy()
   fdir = os.path.dirname(os.path.realpath(__file__))[:-6]
-  if(os.environ.has_key["LD_LIBRARY_PATH"]):
-      
+  if os.environ.has_key("LD_LIBRARY_PATH") :
       for path in os.environ["LD_LIBRARY_PATH"].split(":"):
           if os.path.isfile(path+"/libMallocHook.so"):
               lmpath=path
