@@ -18,5 +18,6 @@ How to configure and install:
     cd ../build
     cmake -DCMAKE_CXX_COMPILER=$(which g++) -DCMAKE_C_COMPILER=$(which gcc) ../FOM-tools -DCMAKE_INSTALL_PREFIX=${PWD}/../install
     make
+    make install
 
 A detailed description about the tool can be found here: https://gitlab.cern.ch/fom/FOM-tools/wikis/home
