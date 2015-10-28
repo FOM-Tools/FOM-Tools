@@ -36,7 +36,7 @@
 #include <cstdint>
 #include <limits>
 #include <pthread.h>
-#ifndef __DO_GNU_BACKTRACE__ 
+#ifndef __DO_GNU_BACKTRACE__
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
 #else
@@ -64,7 +64,7 @@ static int dlsymBuffPos=0;
 extern "C" {
   void* malloc(size_t size);
   void* realloc(void* ptr,size_t size) throw();
-  void* calloc(size_t n,size_t s);
+  void* calloc(size_t n,size_t s) throw();
 }
 
 char* dlsymBuff(){
@@ -153,7 +153,7 @@ void prepFork(){
       malloc_tracing_flag_sami.clear();
     }
   }
-  
+
 }
 
 void postForkParent(){
@@ -184,7 +184,7 @@ void show_backtrace (FILE* f,size_t size,void* addr,int depth,int allocType) {
   int rc=clock_gettime(CLOCK_MONOTONIC_COARSE,&tp);
   FOM_mallocHook::header *hdr=(FOM_mallocHook::header*)(fileBuff());
   hdr->tsec=(long)tp.tv_sec;                  //time sec
-  hdr->tnsec=(long)tp.tv_nsec;                 //time 
+  hdr->tnsec=(long)tp.tv_nsec;                 //time
   hdr->allocType=(char)allocType;
   hdr->addr=(uintptr_t)addr;                       //returned addres
   hdr->size=size;                       //size of allocation
@@ -239,7 +239,7 @@ void show_backtrace_GNU (FILE* f,size_t size,void* addr,int depth) {
     if(buffPos>(maxBuff-1500)){
       fwrite(fileBuff(),sizeof(char),buffPos,f);
       buffPos=0;}
-    
+
     //full_write(STDERR_FILENO, bt_syms[i], len, i, addr, size);
     //full_write(STDERR_FILENO, "\n", 1);
   }
@@ -299,7 +299,7 @@ const char* getOutputFileName(){
 	memcpy(c,p+2,vlen-(p+2-v)+1);
       }
       //fileN.replace(p-v,2,buf);
-      
+
     }else{
       ::strncpy(fname,v,2048);
     }
@@ -337,7 +337,7 @@ FILE* getOutputFile(){
       ///fprintf(stderr,"MalInt:%d using file %s (MALLOC_INTERPOSE_OUTFILE)\n",__LINE__,fileN.c_str());
       ofile=tmp;
     }
-   
+
   }else{
     //fprintf(stderr,"MalInt1:%d using stderr (MALLOC_INTERPOSE_OUTFILE)\n",__LINE__);
   }
@@ -366,7 +366,7 @@ FOM_mallocHook::Writer* getWriter(){
   return w;
 }
 
-void* malloc(size_t size){
+void* malloc(size_t size) throw() {
   static void* (*func)(size_t)=0;
   static size_t sizeLimit=0;
   static int maxDepth=0;
@@ -406,7 +406,7 @@ void* malloc(size_t size){
       return ret;
     }
   }
-  
+
   ret=func(size);
   if((size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
 #ifndef __DO_GNU_BACKTRACE__
@@ -466,7 +466,7 @@ void* realloc(void *ptr, size_t size) throw(){
   return ret;
 }
 
-void* calloc(size_t nobj, size_t size) {
+void* calloc(size_t nobj, size_t size) throw() {
   static void* (*func)(size_t,size_t)=0;
   static size_t sizeLimit=0;
   static int maxDepth=0;
