@@ -55,12 +55,12 @@ def plotHistograms(i, status):
     plt.draw()
 
 # Get Histograms for blocks of continous pages in RAM
-#fig = plt.figure()
-#ax = fig.add_subplot(1,1,1)
-#axes = plt.axes()
-#fig.suptitle("Statistics for blocks of pages in RAM")
-#ani = animation.FuncAnimation(fig, plotHistograms, len(mfiles), fargs=(10,), repeat=False)
-#plt.show()
+fig = plt.figure()
+ax = fig.add_subplot(1,1,1)
+axes = plt.axes()
+fig.suptitle("Statistics for blocks of pages in RAM")
+ani = animation.FuncAnimation(fig, plotHistograms, len(mfiles), fargs=(10,), repeat=False)
+plt.show()
 
 # Get Histograms for blocks of continous pages in Swap
 fig = plt.figure()
@@ -77,4 +77,3 @@ axes = plt.axes()
 fig.suptitle("Statistics for blocks of pages never loaded")
 ani = animation.FuncAnimation(fig, plotHistograms, len(mfiles), fargs=(0,), repeat=False )
 plt.show()
-
