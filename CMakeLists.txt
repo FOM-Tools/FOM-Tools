@@ -54,7 +54,6 @@ endif("$ENV{CMTCONFIG}" STREQUAL "")
 dump_var("COMP_VERSION")
 dump_var("CMTCONFIG")
 dump_var("CMAKE_INSTALL_PREFIX")
-
 set (CMAKE_VERBOSE_MAKEFILE ON)
 dump_var("CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT")
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -66,7 +65,7 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 else()
   message("----------------custom install prefix")
   if(NOT DEFINED ENV{CMTCONFIG})
-    set (CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/FOMTools/${FOMTOOLS_VERSION}/")
+    set (CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/")
   else()
     set (CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/${CMTCONFIG}")    
   endif()
@@ -75,13 +74,13 @@ dump_var("CMAKE_INSTALL_PREFIX")
 dump_var("CMAKE_BINARY_DIR")
 include_directories ("${PROJECT_SOURCE_DIR}/" )
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/cmake/")
-
+SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 find_package(PythonLibs REQUIRED)
-#find_package(Unwind REQUIRED)
+find_package(Unwind REQUIRED)
 include_directories(${PYTHON_INCLUDE_DIRS})
 python_add_module(PageStatusChecker src/PageStatusChecker.cxx)
 target_link_libraries(PageStatusChecker rt)
-add_definitions(-std=c++11)
+add_definitions(--std=c++11)
 add_library(FOMUtils SHARED src/MergePages.cxx src/Streamers.cxx
 src/RegionFinder.cxx src/Parser.cxx src/Addr2Line.cxx)
 add_library(MallocHook SHARED src/mallocinterpose.cxx)
@@ -96,7 +95,9 @@ target_link_libraries(dumpFileInfo
   rt)
 target_link_libraries(testMallocHook rt)
 target_link_libraries(MallocHook -lunwind FOMUtils dl rt)
+target_link_libraries(MallocHook ${UNWIND_LIBRARIES} FOMUtils dl rt)
 set_target_properties(MallocHook PROPERTIES LINK_FLAGS "-static-libstdc++ -static-libgcc" )
+target_include_directories(MallocHook BEFORE PUBLIC ${UNWIND_INCLUDE_DIRS} )
 set_target_properties(FOMUtils PROPERTIES LINK_FLAGS "-static-libstdc++ -static-libgcc" )
 
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" )
@@ -106,14 +107,17 @@ python_add_module(FOMTools FOMTools.cxx)
 target_link_libraries(FOMTools FOMUtils)
 
 
-install(TARGETS binRecord2txt FOMUtils MallocHook
+install(TARGETS binRecord2txt FOMUtils MallocHook dumpFileInfo testMallocHook
   EXPORT "${targets_export_name}"
   LIBRARY DESTINATION "lib"
   ARCHIVE DESTINATION "lib"
   RUNTIME DESTINATION "bin"
   )
-install (DIRECTORY FOMTools DESTINATION include 
-  PATTERN ".git" EXCLUDE PATTERN "*.hpp")
+INSTALL_FILES(/python Monitor.py)
+INSTALL_FILES(/python postprocessing/*)
+install(TARGETS PageStatusChecker FOMTools DESTINATION "python")
+install (DIRECTORY FOMTools/ DESTINATION include 
+  PATTERN "*.hpp")
 include(CMakePackageConfigHelpers)
 include(GenerateExportHeader)
 set(INCLUDE_INSTALL_DIR "include/")
@@ -132,8 +136,6 @@ write_basic_package_version_file(
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsConfig.cmake 
   ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsConfigVersion.cmake
         DESTINATION ${config_install_dir} )
-# Config
-#   * <prefix>/lib/cmake/Foo/FooTargets.cmake
 install(
     EXPORT "${targets_export_name}"
     NAMESPACE "${namespace}"

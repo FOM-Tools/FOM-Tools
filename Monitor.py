@@ -119,8 +119,8 @@ call(cmd, shell=True)
 # Start process
 try:
   environment = os.environ.copy()
-  fdir = os.path.dirname(os.path.realpath(__file__))
-  environment['LD_PRELOAD'] = os.path.join(fdir + "/libMallocHook.so")
+  fdir = os.path.dirname(os.path.realpath(__file__))[:-6]
+  environment['LD_PRELOAD'] = os.path.join(fdir + "lib/libMallocHook.so")
   cmd = shlex.split(args.binary)
   fd = open("output", "w")
   p = Popen(cmd, env=environment,  stdout=fd, stderr=fd)
