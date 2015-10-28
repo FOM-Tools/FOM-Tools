@@ -10,6 +10,7 @@ set(FOMTOOLS_VERSION ${FOMTOOLS_MAJOR_VERSION}.${FOMTOOLS_MINOR_VERSION}.${FOMTO
 include(CTest)
 
 #--- massage configure options -------------------------------------------------
+add_definitions(--std=c++11)
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0 -Wall")
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
@@ -57,34 +58,9 @@ dump_var("CMAKE_CXX_COMPILER_ID")
 dump_var("CMAKE_CXX_COMPILER_ID_RUN")
 dump_var("COMP_VERSION")
 dump_var("CMTCONFIG")
-dump_var("CMAKE_INSTALL_PREFIX")
-
-#--- find dependencies ---------------------------------------------------------
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/cmake/")
-find_package(PythonLibs REQUIRED)
-find_package(Unwind REQUIRED)
-
-
-#--- add version files ---------------------------------------------------------
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/FOMToolsVersion.h
-               ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsVersion.h )
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsVersion.h
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/include/FOMTools )
-
-#--- add license files ---------------------------------------------------------
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/COPYING
-        DESTINATION ${CMAKE_INSTALL_PREFIX})
-
-
-set(targets_export_name "${PROJECT_NAME}Targets")
-
 dump_var("CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT")
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   message("----------------Default install prefix")
-  # if( NOT  "$ENV{ATLAS_EXTERNAL}" STREQUAL "")
-  #   set(CMAKE_INSTALL_PREFIX
-  #     $ENV{ATLAS_EXTERNAL}/APE/${APE_VERSION}/${CMTCONFIG} CACHE PATH "Developer install path" FORCE)
-  # endif()
 else()
   message("----------------custom install prefix")
   if(NOT DEFINED ENV{CMTCONFIG})
@@ -96,44 +72,39 @@ endif()
 dump_var("CMAKE_INSTALL_PREFIX")
 dump_var("CMAKE_BINARY_DIR")
 
-include_directories ("${PROJECT_SOURCE_DIR}/" )
-SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+#--- find dependencies ---------------------------------------------------------
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/cmake/")
 find_package(PythonLibs REQUIRED)
 find_package(Unwind REQUIRED)
 include_directories(${PYTHON_INCLUDE_DIRS})
+
+#--- add version files ---------------------------------------------------------
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/FOMToolsVersion.h
+               ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsVersion.h )
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsVersion.h
+        DESTINATION ${CMAKE_INSTALL_PREFIX}/include/FOMTools )
+
+#--- add license files ---------------------------------------------------------
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/COPYING
+        DESTINATION ${CMAKE_INSTALL_PREFIX})
+
+include_directories ("${PROJECT_SOURCE_DIR}/" )
+SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+
+
+#--- project specific subdirectories -------------------------------------------
+add_subdirectory(src)
+add_subdirectory(test)
+
+# python wrapper
 python_add_module(PageStatusChecker src/PageStatusChecker.cxx)
 target_link_libraries(PageStatusChecker rt)
-add_definitions(--std=c++11)
-add_library(FOMUtils SHARED src/MergePages.cxx src/Streamers.cxx
-src/RegionFinder.cxx src/Parser.cxx src/Addr2Line.cxx)
-add_library(MallocHook SHARED src/mallocinterpose.cxx)
-add_executable(binRecord2txt src/MHbin2txt.cxx)
-add_executable(dumpFileInfo src/dumpCmdline.cxx)
-target_link_libraries(binRecord2txt
-  FOMUtils
-  rt)
-target_link_libraries(dumpFileInfo
-  FOMUtils
-  rt)
-target_link_libraries(MallocHook -lunwind FOMUtils dl rt)
-target_link_libraries(MallocHook ${UNWIND_LIBRARIES} FOMUtils dl rt)
-set_target_properties(MallocHook PROPERTIES LINK_FLAGS "-static-libstdc++ -static-libgcc" )
-target_include_directories(MallocHook BEFORE PUBLIC ${UNWIND_INCLUDE_DIRS} )
-set_target_properties(FOMUtils PROPERTIES LINK_FLAGS "-static-libstdc++ -static-libgcc" )
 
-if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" )
-  set_target_properties(FOMUtils PROPERTIES COMPILE_FLAGS "-ftree-vectorize" )
-endif()
 python_add_module(FOMTools FOMTools.cxx)
 target_link_libraries(FOMTools FOMUtils)
 
 
-install(TARGETS binRecord2txt FOMUtils MallocHook dumpFileInfo
-  EXPORT "${targets_export_name}"
-  LIBRARY DESTINATION "lib"
-  ARCHIVE DESTINATION "lib"
-  RUNTIME DESTINATION "bin"
-  )
+
 INSTALL_FILES(/python Monitor.py)
 INSTALL_FILES(/python postprocessing/*)
 install(TARGETS PageStatusChecker FOMTools DESTINATION "python")
@@ -158,11 +129,8 @@ write_basic_package_version_file(
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsConfig.cmake
   ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsConfigVersion.cmake
         DESTINATION ${config_install_dir} )
-install(
-    EXPORT "${targets_export_name}"
-    NAMESPACE "${namespace}"
-    DESTINATION "${config_install_dir}"
-)
-
-#--- project specific subdirectories -------------------------------------------
-add_subdirectory(test)
+#install(
+#    EXPORT "${targets_export_name}"
+#    NAMESPACE "${namespace}"
+#    DESTINATION "${config_install_dir}"
+#)
