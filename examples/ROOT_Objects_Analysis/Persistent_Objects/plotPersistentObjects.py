@@ -1,4 +1,4 @@
- #
+#
  #  Copyright (c) CERN 2015
  #
  #  Authors:
@@ -90,9 +90,6 @@ if not os.path.isfile("All_ROOT_Objects.txt"):
   del adrTmp
 
   dim = time.shape[0]
-  time.shape	= (dim,1)
-  begin.shape 	= (dim,1)
-  end.shape	= (dim,1)
   m = numpy.hstack([time,begin,end])
   numpy.savetxt("Persistent_ROOT_Objects.txt",m )
 
@@ -206,4 +203,3 @@ f.close()
 
 # Execute Gnuplot and perform cleanup
 call(["gnuplot", "cmd.txt"])
-
