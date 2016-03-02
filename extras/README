@@ -1,0 +1,1 @@
+record2TTree.cxx converts FOM binary output to a ttree, calculating a few metrics at the same time.
