@@ -30,14 +30,48 @@
 #include <iostream>
 #include <exception>
 #include <stdexcept>
+#include <sys/time.h>
 
 #define handle_error(msg)				\
   do { perror(msg); exit(EXIT_FAILURE); } while (0)
 static const uintptr_t pageMask=(sysconf(_SC_PAGE_SIZE) - 1);
 
+
+void timespec_add (struct timespec *left, struct timespec *right) {
+    // long tmp1 = long(left->tv_sec + right->tv_sec);
+    // long tmp2 = long(left->tv_nsec + right->tv_nsec);
+  
+    // if (tmp2 >= 1000000000)
+    //  {  
+    //     ++tmp1;
+    //     tmp2 -= 1000000000;
+    //  }
+  left->tv_sec += right->tv_sec;
+  left->tv_nsec+= right->tv_nsec;
+  if (left->tv_nsec>1000000000l){
+    left->tv_sec++;
+    left->tv_nsec-= 1000000000l;
+  }
+}
+
+static int timespec_sub (struct timespec *diff, long xsec, long xnsec, long ysec, long ynsec)
+{
+  diff->tv_sec=xsec-ysec;
+  diff->tv_nsec=xnsec-ynsec;
+  if(diff->tv_nsec<0){
+    diff->tv_sec--;
+    diff->tv_nsec+=1000000000;
+  }
+}
+
+
 FOM_mallocHook::MemRecord::MemRecord(void* r){
   m_h.tsec=0;
   m_h.tnsec=0;
+  m_h.timediffsec=0;
+  m_h.timediffnsec=0;
+  m_h.timediff2sec=0;
+  m_h.timediff2nsec=0;
   m_h.allocType=0;
   m_h.addr=0;
   m_h.size=0;
@@ -50,6 +84,7 @@ FOM_mallocHook::MemRecord::MemRecord(void* r){
     m_stacks=(FOM_mallocHook::index_t*)(hh+1);
   }
 }
+
 FOM_mallocHook::MemRecord::OVERLAP_TYPE FOM_mallocHook::MemRecord::getOverlap()const {return m_overlap;};
 
 void FOM_mallocHook::MemRecord::setOverlap(FOM_mallocHook::MemRecord::OVERLAP_TYPE o){m_overlap=o;}
@@ -79,6 +114,13 @@ long FOM_mallocHook::MemRecord::getTimeSec()const{
 long FOM_mallocHook::MemRecord::getTimeNSec() const{
   return m_h.tnsec;
 }
+long FOM_mallocHook::MemRecord::getTimeDiffSec()const{
+  return m_h.timediffsec;
+}
+
+long FOM_mallocHook::MemRecord::getTimeDiffNSec() const{
+  return m_h.timediffnsec;
+}
 
 char FOM_mallocHook::MemRecord::getAllocType() const{
   return m_h.allocType; 
@@ -99,8 +141,10 @@ std::vector<FOM_mallocHook::index_t> FOM_mallocHook::MemRecord::getStacks() cons
   }
   return std::vector<FOM_mallocHook::index_t> (m_stacks,m_stacks+m_h.count);
 }
-// FOM_mallocHook::Reader::Reader():m_fileOpened(false),
-// 				 m_fileHandle(-1),m_fileLength(0),m_fileName(""),m_fileBegin(0){}
+
+/* READER CLASS
+ */
+
 FOM_mallocHook::Reader::Reader(std::string fileName):m_fileHandle(-1),
 						     m_fileLength(0),m_fileName(fileName),m_fileBegin(0),m_fileStats(0),m_fileOpened(false)
    {
@@ -125,6 +169,7 @@ FOM_mallocHook::Reader::Reader(std::string fileName):m_fileHandle(-1),
   //size_t nrecords=0;
   char buff[2050];
   m_fileStats=new FOM_mallocHook::FileStats();
+  //std::cout << m_fileStats << " " << m_fileHandle << std::endl;
   m_fileStats->read(m_fileHandle,false);
   off_t hdrOff=::lseek(m_fileHandle,0,SEEK_CUR);
   ::lseek(m_fileHandle,0,SEEK_SET);
@@ -134,22 +179,83 @@ FOM_mallocHook::Reader::Reader(std::string fileName):m_fileHandle(-1),
   }
   std::cout<<"Starting to scan the file. File should contain "<<
     m_fileStats->getNumRecords()<<" entries"<<std::endl;
-  m_records.reserve(m_fileStats->getNumRecords());
+
+  void* fileEnd=(char*)m_fileBegin+sinp.st_size;
+  FOM_mallocHook::header *h=(FOM_mallocHook::header*)(((uintptr_t)m_fileBegin)+hdrOff);
+  std::string outName=fileName+".txt";
+int outFile=open(outName.c_str(),O_WRONLY|O_CREAT|O_TRUNC,(S_IRWXU^S_IXUSR)|(S_IRWXG^S_IXGRP)|S_IROTH);
+  ssize_t buffPos=0;
+  size_t maxBuf=16<<10;
+  char buff2[16<<10];
+  
+  struct timespec overhead;
+  long overhead_sec = 0.0; 
+  long overhead_nsec = 0.0;
+  while ((void*)h<fileEnd){
+     
+     MemRecord mr(h);
+     const auto hdr=mr.getHeader();
+     struct timespec diff;
+     timespec_sub(&diff, hdr->timediff2sec, hdr->timediff2nsec, hdr->timediffsec, hdr->timediffnsec);    
+     timespec_add(&overhead, &diff);
+     buffPos+=snprintf(buff2+buffPos,maxBuf-buffPos,
+                "%ld%09ld %d %lu %d %ld%09ld %ld%09ld \"",
+                hdr->tsec,
+                hdr->tnsec,//*msecRes),
+                hdr->allocType,
+                hdr->addr, hdr->size, hdr->timediffsec, hdr->timediffnsec, overhead_sec, overhead_nsec);
+    overhead_sec = overhead.tv_sec;
+    overhead_nsec = overhead.tv_nsec;
+    int nStacks=0;
+    auto stIds=mr.getStacks(&nStacks);
+   // std::cout << nStacks << std::endl;
+     for(int i=0;i< nStacks;i++){
+        buffPos+=snprintf(buff2+buffPos,maxBuf-buffPos," %u",*(stIds+i));}
+    buffPos+=snprintf(buff2+buffPos,maxBuf-buffPos,"\"\n");
+    write(outFile,buff2,buffPos);
+    h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count);
+    buffPos=0;
+    }
+    
+ 
+    //catch(std::exception &ex){
+    //std::cout<< h <<std::endl;}
+    
+
+
+  /*m_records.reserve(2357945446);//m_fileStats->getNumRecords());
+  std::cout << "....." <<std::endl;
   void* fileEnd=(char*)m_fileBegin+sinp.st_size;
   FOM_mallocHook::header *h=(FOM_mallocHook::header*)(((uintptr_t)m_fileBegin)+hdrOff);
   while ((void*)h<fileEnd){
-    // MemRecord mr(h);
-    // const auto hdr=mr.getHeader();
-    // std::cout<<"tsec= "<<hdr->tsec<<
-    //   " tnsec= "<<hdr->tnsec<<
-    //   " addr= "<<hdr->addr<<
-    //   " size= "<<hdr->size<<
-    //   " count= "<<hdr->count;
+     try{ 
+     MemRecord mr(h);
+   /*  const auto hdr=mr.getHeader();
+     std::cout<<"tsec= "<<hdr->tsec<<
+       " tnsec= "<<hdr->tnsec<<
+       " addr= "<<hdr->addr<<
+       " size= "<<hdr->size<<
+       " count= "<<hdr->count;*/
+  //  std::cout << "test3" << std::endl;
+   /* m_records.emplace_back((void*)h);
+    h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count);}
+    catch(std::exception &ex){
+    std::cout<< h <<std::endl;
+    h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count);
+    std::cout << h << std::endl;
     
     m_records.emplace_back((void*)h);
-    h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count);
+    MemRecord mr(h);
+    const auto hdr=mr.getHeader();
+     std::cout<<"tsec= "<<hdr->tsec<<
+       " tnsec= "<<hdr->tnsec<<
+       " addr= "<<hdr->addr<<
+       " size= "<<hdr->size<<
+       " count= "<<hdr->count << " " << h->count;
+    break;
+     }
   }
-  std::cout<<"Found "<<m_records.size()<<" records"<<std::endl;
+  std::cout<<"Found "<<m_records.size()<<" records"<<std::endl;*/
 }
 const FOM_mallocHook::FileStats* FOM_mallocHook::Reader::getFileStats()const{
   return m_fileStats;
@@ -165,6 +271,9 @@ FOM_mallocHook::Reader::~Reader(){
 
 const FOM_mallocHook::MemRecord& FOM_mallocHook::Reader::at(size_t t){return m_records.at(t);}
 size_t FOM_mallocHook::Reader::size(){return m_records.size();}
+
+/* WRITER CLASS
+ */
 
 FOM_mallocHook::Writer::Writer(std::string fileName):m_fileName(fileName),m_fileHandle(-1),m_fileOpened(false),m_stats(0){
   if(m_fileName.empty())throw std::ios_base::failure("File name is empty");
@@ -194,6 +303,7 @@ FOM_mallocHook::Writer::Writer(std::string fileName):m_fileName(fileName),m_file
   m_maxDepth=0;
   delete[] buff;
 }
+
 
 bool FOM_mallocHook::Writer::closeFile(bool flush){
   if(m_fileOpened){
@@ -583,4 +693,297 @@ int FOM_mallocHook::FileStats::read(std::istream &in){
 int FOM_mallocHook::FileStats::write(std::ostream &out){
   return 0;
 }
+/* 
+INDEXING READER
+*/
 
+FOM_mallocHook::IndexingReader::IndexingReader(std::string fileName,uint indexPeriod):m_fileHandle(-1),
+										      m_fileLength(0),m_fileName(fileName),
+										      m_fileBegin(0),m_fileStats(0),m_fileOpened(false),
+										      m_period(indexPeriod),m_remainder(0),
+										      m_lastIndex(0),m_numRecords(0),
+										      m_lastHdr(0)
+{
+  if(m_fileName.empty())throw std::ios_base::failure("File name is empty");
+  int inpFile=open(m_fileName.c_str(),O_RDONLY);
+  if(inpFile==-1){
+    std::cerr<<"Input file \""<<m_fileName<<"\" does not exist"<<std::endl;
+    char buff[2048];
+    throw std::ios_base::failure(std::string(strerror_r(errno,buff,2048)));
+  }
+  m_fileHandle=inpFile;
+  struct stat sinp;
+  if(fstat(m_fileHandle,&sinp)==-1){
+    char buff[2048];
+    throw std::ios_base::failure(std::string(strerror_r(errno,buff,2048)));    
+  }
+  if(sinp.st_size<sizeof(FOM_mallocHook::header)){
+    throw std::length_error("Corrupt file. File is too short");
+  }
+  m_fileLength=sinp.st_size;
+  m_fileOpened=true;
+  //size_t nrecords=0;
+  char buff[2050];
+  m_fileStats=new FOM_mallocHook::FileStats();
+  //std::cout << m_fileStats << " " << m_fileHandle << std::endl;
+  m_fileStats->read(m_fileHandle,false);
+  off_t hdrOff=::lseek(m_fileHandle,0,SEEK_CUR);
+  ::lseek(m_fileHandle,0,SEEK_SET);
+  m_fileBegin=mmap64(0,sinp.st_size,PROT_READ,MAP_PRIVATE,inpFile,0);
+  if(m_fileBegin==MAP_FAILED){
+    throw std::ios_base::failure(std::string(strerror_r(errno,buff,2048))+"failed to mmap "+m_fileName);        
+  }
+  
+  std::cout<<"Starting to scan the file. File should contain "<<
+    m_fileStats->getNumRecords()<<" entries"<<std::endl;
+  void* fileEnd=(char*)m_fileBegin+sinp.st_size;
+  FOM_mallocHook::header *h=(FOM_mallocHook::header*)(((uintptr_t)m_fileBegin)+hdrOff);
+  m_records.reserve(m_fileStats->getNumRecords());
+  if(m_period<1)m_period=100;
+  size_t count=0;
+  m_lastHdr=h;
+  while ((void*)h<fileEnd){
+    if((count%m_period)==0)m_records.emplace_back(h);
+    h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count);
+    count++;
+  }
+  m_numRecords=count;
+  m_remainder=((count-1)%m_period);
+  std::cout<<"Counted "<<count<<" records. Created "<<m_records.size()<<" index points. Remaining "<< m_remainder<<" records"<<std::endl;
+}
+
+const FOM_mallocHook::FileStats* FOM_mallocHook::IndexingReader::getFileStats()const{
+  return m_fileStats;
+}
+
+FOM_mallocHook::IndexingReader::~IndexingReader(){
+  if(m_fileOpened){
+    munmap(m_fileBegin,m_fileLength);
+    close(m_fileHandle);
+    m_records.clear();
+  }
+}
+
+const FOM_mallocHook::RecordIndex FOM_mallocHook::IndexingReader::at(size_t t){
+  if(t>=m_numRecords){
+    char bu[500];
+    snprintf(bu,500,"Asked for an index larger than number of records! t=%ld size=%ld",t,m_numRecords);
+    throw std::length_error(bu);
+  }
+  size_t bucket=t/m_period;
+  size_t offset=t-(bucket*m_period);
+  if(offset==0){return m_records.at(bucket);}
+  size_t d=t-m_lastIndex;
+  if((d>0) &&(d<offset)){
+    auto h=m_lastHdr;
+    for(int i=0;i<d;i++){
+      h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count);
+    }
+    m_lastHdr=h;
+  }else{
+    auto h=m_records.at(bucket).getHeader();
+    for(int i=0;i<offset;i++){
+      h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count);
+    }
+    m_lastHdr=h;
+  }
+  m_lastIndex=t;
+  return FOM_mallocHook::RecordIndex(m_lastHdr);
+}
+
+size_t FOM_mallocHook::IndexingReader::size(){
+  return (((m_records.size()-1)*m_period)+m_remainder+1);
+}
+size_t FOM_mallocHook::IndexingReader::indexedSize(){
+  return m_records.size();
+}
+
+/*
+// Record Index
+*/
+FOM_mallocHook::RecordIndex::RecordIndex(const FOM_mallocHook::header* h):m_h(0),m_overlap(MemRecord::Undefined){
+  if(h){
+    m_h=h;
+  }
+}
+FOM_mallocHook::MemRecord::OVERLAP_TYPE FOM_mallocHook::RecordIndex::getOverlap()const {return m_overlap;};
+
+void FOM_mallocHook::RecordIndex::setOverlap(FOM_mallocHook::MemRecord::OVERLAP_TYPE o){m_overlap=o;}
+
+FOM_mallocHook::RecordIndex::~RecordIndex(){};
+
+const FOM_mallocHook::header* const FOM_mallocHook::RecordIndex::getHeader() const{
+  return m_h;
+}
+
+const FOM_mallocHook::index_t* const FOM_mallocHook::RecordIndex::getStacks(int *count) const {
+  if(m_h){
+    *count=m_h->count;
+    return (FOM_mallocHook::index_t*)(m_h+1);
+  }
+  *count=0;
+  return 0;
+
+}
+
+uintptr_t FOM_mallocHook::RecordIndex::getFirstPage()const {
+  return (m_h->addr&(~pageMask));
+}
+
+uintptr_t FOM_mallocHook::RecordIndex::getLastPage()const {
+  return (m_h->addr+m_h->size)|pageMask;
+}
+long FOM_mallocHook::RecordIndex::getTimeSec()const{
+  return m_h->tsec;
+}
+
+long FOM_mallocHook::RecordIndex::getTimeNSec() const{
+  return m_h->tnsec;
+}
+
+long FOM_mallocHook::RecordIndex::getT0Sec()const{
+  return m_h->tsec;
+}
+
+long FOM_mallocHook::RecordIndex::getT0NSec() const{
+  return m_h->tnsec;
+}
+long FOM_mallocHook::RecordIndex::getT1Sec()const{
+  return m_h->timediffsec;
+}
+
+long FOM_mallocHook::RecordIndex::getT1NSec() const{
+  return m_h->timediffnsec;
+}
+long FOM_mallocHook::RecordIndex::getT2Sec()const{
+  return m_h->timediff2sec;
+}
+
+long FOM_mallocHook::RecordIndex::getT2NSec() const{
+  return m_h->timediff2nsec;
+}
+
+char FOM_mallocHook::RecordIndex::getAllocType() const{
+  return m_h->allocType; 
+}
+
+uintptr_t FOM_mallocHook::RecordIndex::getAddr() const{
+  return m_h->addr;
+}
+
+size_t FOM_mallocHook::RecordIndex::getSize() const{
+  return m_h->size;
+
+}
+
+std::vector<FOM_mallocHook::index_t> FOM_mallocHook::RecordIndex::getStacks() const{
+  if((m_h==0)||(m_h->count==0)){
+    return std::vector<FOM_mallocHook::index_t>();
+  }
+  return std::vector<FOM_mallocHook::index_t> ((FOM_mallocHook::index_t*)(m_h+1),((FOM_mallocHook::index_t*)(m_h+1))+m_h->count);
+}
+
+/*
+FullRecord
+*/
+
+FOM_mallocHook::FullRecord::FullRecord(const FOM_mallocHook::header* h):m_h(0),m_overlap(MemRecord::Undefined){
+  if(h){//make a local copy
+    m_h=(FOM_mallocHook::header*)new char[sizeof(FOM_mallocHook::header)+(h->count*sizeof(FOM_mallocHook::index_t))];
+    *m_h=*h;
+    auto dst=((FOM_mallocHook::index_t*)(m_h+1));
+    auto src=((FOM_mallocHook::index_t*)(h+1));
+    for(int i=0;i<h->count;i++){
+      src[i]=dst[i];
+    }
+  }
+}
+
+FOM_mallocHook::FullRecord::FullRecord(const FullRecord& rhs):m_h(0),m_overlap(rhs.m_overlap){
+  if(rhs.m_h){//make a local copy
+    m_h=(FOM_mallocHook::header*)new char[sizeof(FOM_mallocHook::header)+(rhs.m_h->count*sizeof(FOM_mallocHook::index_t))];
+    *m_h=*rhs.m_h;
+    auto dst=((FOM_mallocHook::index_t*)(m_h+1));
+    auto src=((FOM_mallocHook::index_t*)(rhs.m_h+1));
+    for(int i=0;i<rhs.m_h->count;i++){
+      src[i]=dst[i];
+    }
+  }
+}
+
+FOM_mallocHook::MemRecord::OVERLAP_TYPE FOM_mallocHook::FullRecord::getOverlap()const {return m_overlap;};
+
+void FOM_mallocHook::FullRecord::setOverlap(FOM_mallocHook::MemRecord::OVERLAP_TYPE o){m_overlap=o;}
+
+FOM_mallocHook::FullRecord::~FullRecord(){delete[] (char*)m_h;};
+
+const FOM_mallocHook::header* const FOM_mallocHook::FullRecord::getHeader() const{
+  return m_h;
+}
+
+const FOM_mallocHook::index_t* const FOM_mallocHook::FullRecord::getStacks(int *count) const {
+  if(m_h){
+    *count=m_h->count;
+    return (FOM_mallocHook::index_t*)(m_h+1);
+  }
+  *count=0;
+  return 0;
+
+}
+
+uintptr_t FOM_mallocHook::FullRecord::getFirstPage()const {
+  return (m_h->addr&(~pageMask));
+}
+
+uintptr_t FOM_mallocHook::FullRecord::getLastPage()const {
+  return (m_h->addr+m_h->size)|pageMask;
+}
+long FOM_mallocHook::FullRecord::getTimeSec()const{
+  return m_h->tsec;
+}
+
+long FOM_mallocHook::FullRecord::getTimeNSec() const{
+  return m_h->tnsec;
+}
+
+long FOM_mallocHook::FullRecord::getT0Sec()const{
+  return m_h->tsec;
+}
+
+long FOM_mallocHook::FullRecord::getT0NSec() const{
+  return m_h->tnsec;
+}
+long FOM_mallocHook::FullRecord::getT1Sec()const{
+  return m_h->timediffsec;
+}
+
+long FOM_mallocHook::FullRecord::getT1NSec() const{
+  return m_h->timediffnsec;
+}
+long FOM_mallocHook::FullRecord::getT2Sec()const{
+  return m_h->timediff2sec;
+}
+
+long FOM_mallocHook::FullRecord::getT2NSec() const{
+  return m_h->timediff2nsec;
+}
+
+char FOM_mallocHook::FullRecord::getAllocType() const{
+  return m_h->allocType; 
+}
+
+uintptr_t FOM_mallocHook::FullRecord::getAddr() const{
+  return m_h->addr;
+}
+
+size_t FOM_mallocHook::FullRecord::getSize() const{
+  return m_h->size;
+
+}
+
+std::vector<FOM_mallocHook::index_t> FOM_mallocHook::FullRecord::getStacks() const{
+  if((m_h==0)||(m_h->count==0)){
+    return std::vector<FOM_mallocHook::index_t>();
+  }
+  return std::vector<FOM_mallocHook::index_t> ((FOM_mallocHook::index_t*)(m_h+1),((FOM_mallocHook::index_t*)(m_h+1))+m_h->count);
+}

@@ -37,12 +37,18 @@ namespace FOM_mallocHook{
   struct header{
     long tsec;
     long tnsec;
+    long timediffsec;
+    long timediffnsec;
+    long timediff2sec;
+    long timediff2nsec;
     char allocType;
     uintptr_t addr;//returned address
     size_t size; //size of allocation
     int count; // # of stacks in record
   }__attribute__((packed));
-
+  //
+  // Just keeps header information in local variables, indices are located in pre-allocated memory locations.
+  //
   class MemRecord{
   public:
     enum OVERLAP_TYPE{Undefined=0,//Overlap is meaningless (i.e when reading from file)
@@ -58,6 +64,8 @@ namespace FOM_mallocHook{
     uintptr_t getLastPage() const ;
     long getTimeSec()const;
     long getTimeNSec() const;
+    long getTimeDiffSec()const;
+    long getTimeDiffNSec() const;
     uintptr_t getAddr() const;
     size_t getSize() const;
     char getAllocType() const;
@@ -70,6 +78,67 @@ namespace FOM_mallocHook{
     FOM_mallocHook::header m_h;
     FOM_mallocHook::index_t* m_stacks;
     OVERLAP_TYPE m_overlap;
+  };
+
+  //
+  //RecordIndex. Keeps a reference to already existing memory location (such as a mmapped file)
+  //
+  class RecordIndex{
+  public:
+    RecordIndex(const FOM_mallocHook::header*);
+    ~RecordIndex();
+    uintptr_t getFirstPage() const;
+    uintptr_t getLastPage() const ;
+    long getTimeSec()const;
+    long getTimeNSec() const;
+    long getT0Sec() const;
+    long getT0NSec() const;
+    long getT1Sec() const;
+    long getT1NSec() const;
+    long getT2Sec() const;
+    long getT2NSec() const;
+    uintptr_t getAddr() const;
+    size_t getSize() const;
+    char getAllocType() const;
+    const index_t* const getStacks(int *count) const;
+    std::vector<index_t> getStacks() const;
+    const FOM_mallocHook::header* const getHeader() const;
+    MemRecord::OVERLAP_TYPE getOverlap() const;
+    void setOverlap(MemRecord::OVERLAP_TYPE);
+  private:
+    const FOM_mallocHook::header *m_h;
+    MemRecord::OVERLAP_TYPE m_overlap;
+  };
+
+  //
+  //FullRecord. Keeps a copy of full record in private memory
+  //
+  class FullRecord{
+  public:
+    FullRecord(const FOM_mallocHook::header*);
+    FullRecord(const FullRecord& );
+    ~FullRecord();
+    uintptr_t getFirstPage() const;
+    uintptr_t getLastPage() const ;
+    long getTimeSec()const;
+    long getTimeNSec() const;
+    long getT0Sec() const;
+    long getT0NSec() const;
+    long getT1Sec() const;
+    long getT1NSec() const;
+    long getT2Sec() const;
+    long getT2NSec() const;
+    uintptr_t getAddr() const;
+    size_t getSize() const;
+    char getAllocType() const;
+    const index_t* const getStacks(int *count) const;
+    std::vector<index_t> getStacks() const;
+    const FOM_mallocHook::header* const getHeader() const;
+    MemRecord::OVERLAP_TYPE getOverlap() const;
+    void setOverlap(MemRecord::OVERLAP_TYPE);
+  private:
+    FOM_mallocHook::header *m_h;
+    MemRecord::OVERLAP_TYPE m_overlap;
   };
 
   class FileStats;
@@ -176,6 +245,32 @@ namespace FOM_mallocHook{
     FOM_mallocHook::FileStats* m_fileStats;
     bool m_fileOpened;
 
+  };
+
+  class IndexingReader{
+  public:
+    IndexingReader(std::string fileName,unsigned int indexPeriod=100);
+    IndexingReader()=delete;
+    ~IndexingReader();
+    //const MemRecord&  readNext();
+    const RecordIndex at(size_t);
+    size_t size();
+    size_t indexedSize();
+    const FOM_mallocHook::FileStats* getFileStats() const;
+  private:
+    RecordIndex& seek(const RecordIndex& start, uint offset);
+    int m_fileHandle;
+    size_t m_fileLength;
+    std::string m_fileName;
+    void *m_fileBegin;
+    std::vector<RecordIndex> m_records;
+    FOM_mallocHook::FileStats* m_fileStats;
+    bool m_fileOpened;
+    uint m_period;
+    uint m_remainder;
+    size_t m_lastIndex;
+    size_t m_numRecords;
+    const FOM_mallocHook::header* m_lastHdr;    
   };
 
   //  class FileStats;

@@ -36,7 +36,7 @@
 #include <cstdint>
 #include <limits>
 #include <pthread.h>
-#ifndef __DO_GNU_BACKTRACE__ 
+#ifndef __DO_GNU_BACKTRACE__
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
 #else
@@ -51,20 +51,25 @@ static std::atomic_flag initializedForkHooks = ATOMIC_FLAG_INIT;
 
 #define __MAXBUFF__ 4096
 static int maxBuff=__MAXBUFF__;
-
+static unsigned long int  counter = 0;
 char* fileBuff(){
   static char fileBuff[__MAXBUFF__];
   return fileBuff;
 }
+struct timespec tp;
+int rc=clock_gettime(CLOCK_MONOTONIC,&tp);
+static long starttime = (long)tp.tv_sec;
+
 //static int buffPos=0;
 //static FILE* s_OutFil=0;
 static FOM_mallocHook::Writer* fwriter=0;
 static int dlsymBuffPos=0;
 //static double msecRes=1.0/1000000;
 extern "C" {
-  void* malloc(size_t size);
+  void* malloc(size_t size) throw();
   void* realloc(void* ptr,size_t size) throw();
-  void* calloc(size_t n,size_t s);
+  void* calloc(size_t n,size_t s) throw();
+  void free(void* ptr);
 }
 
 char* dlsymBuff(){
@@ -138,6 +143,7 @@ void atexit_handler(){
     fflush(tmp);
     fclose(tmp);
   }
+  //std::cerr << "Counter " << counter << std::endl;
   delete fwriter;
   fwriter=0;
   delete mhbuildInfo;
@@ -153,7 +159,7 @@ void prepFork(){
       malloc_tracing_flag_sami.clear();
     }
   }
-  
+
 }
 
 void postForkParent(){
@@ -174,22 +180,26 @@ void postForkChildren(){
   std::atexit(atexit_handler);
 }
 
-void show_backtrace (FILE* f,size_t size,void* addr,int depth,int allocType) {
-  unw_cursor_t cursor; unw_context_t uc;
-  unw_word_t ip;
-  unw_getcontext(&uc);
-  unw_init_local(&cursor, &uc);
+void show_backtrace (FILE* f,size_t size,void* addr,int depth,int allocType, timespec t1, timespec t2) {
   int count=0;
-  struct timespec tp;
-  int rc=clock_gettime(CLOCK_MONOTONIC_COARSE,&tp);
+//  struct timespec tp;
+//  int rc=clock_gettime(CLOCK_MONOTONIC,&tp);
   FOM_mallocHook::header *hdr=(FOM_mallocHook::header*)(fileBuff());
-  hdr->tsec=(long)tp.tv_sec;                  //time sec
-  hdr->tnsec=(long)tp.tv_nsec;                 //time 
+  hdr->tsec=(long)t1.tv_sec;                  //time sec
+  hdr->tnsec=(long)t1.tv_nsec;                 //time
   hdr->allocType=(char)allocType;
   hdr->addr=(uintptr_t)addr;                       //returned addres
   hdr->size=size;                       //size of allocation
+  hdr->timediffsec = (long)t2.tv_sec;
+  hdr->timediffnsec = (long)t2.tv_nsec;
   FOM_mallocHook::index_t *stackRecord=(FOM_mallocHook::index_t*)(hdr+1);
-  while (unw_step(&cursor) > 0 && count<depth) {
+  //if (t1.tv_sec-starttime > 1000 && addr != 0 && size > 0){ //skip init time with malloc hook
+  if (addr != 0 && size > 0){
+    unw_cursor_t cursor; unw_context_t uc;
+    unw_word_t ip;
+    unw_getcontext(&uc);
+    unw_init_local(&cursor, &uc);
+   while (unw_step(&cursor) > 0 && count<depth) {
     unw_get_reg(&cursor, UNW_REG_IP, &ip);
     auto it=symMap().insert(std::make_pair(ip,symMap().size()));
     //fprintf(stderr," ip=%ld\n",(long)ip);
@@ -215,15 +225,21 @@ void show_backtrace (FILE* f,size_t size,void* addr,int depth,int allocType) {
 	  snprintf(strBuf,1400,"%s + 0x%lx @ ip= 0x%lx sp= 0x%lx",funcName,(long)offp,(long)ip,(long)sp);
 	}
       }
+   
       symNames().emplace_back(strBuf);
     }
     *stackRecord=it.first->second;
     stackRecord++;
     count++;
-  }
+  }}
   hdr->count=count;
+  struct timespec t3;
+  int rc=clock_gettime(CLOCK_MONOTONIC,&t3);
+  hdr->timediff2sec = (long)t3.tv_sec;
+  hdr->timediff2nsec = (long)t3.tv_nsec;
   fwriter->writeRecord(FOM_mallocHook::MemRecord(fileBuff()));
-}
+  counter = counter + 1;
+ }
 
 #ifdef __DO_GNU_BACKTRACE__
 void show_backtrace_GNU (FILE* f,size_t size,void* addr,int depth) {
@@ -239,7 +255,7 @@ void show_backtrace_GNU (FILE* f,size_t size,void* addr,int depth) {
     if(buffPos>(maxBuff-1500)){
       fwrite(fileBuff(),sizeof(char),buffPos,f);
       buffPos=0;}
-    
+
     //full_write(STDERR_FILENO, bt_syms[i], len, i, addr, size);
     //full_write(STDERR_FILENO, "\n", 1);
   }
@@ -265,6 +281,7 @@ int getShift(){
 }
 
 int getMaxDepth(){
+  return 20;
   char* v=getenv("MALLOC_INTERPOSE_DEPTH");
   int s=10;
   if(v){
@@ -299,7 +316,7 @@ const char* getOutputFileName(){
 	memcpy(c,p+2,vlen-(p+2-v)+1);
       }
       //fileN.replace(p-v,2,buf);
-      
+
     }else{
       ::strncpy(fname,v,2048);
     }
@@ -337,7 +354,7 @@ FILE* getOutputFile(){
       ///fprintf(stderr,"MalInt:%d using file %s (MALLOC_INTERPOSE_OUTFILE)\n",__LINE__,fileN.c_str());
       ofile=tmp;
     }
-   
+
   }else{
     //fprintf(stderr,"MalInt1:%d using stderr (MALLOC_INTERPOSE_OUTFILE)\n",__LINE__);
   }
@@ -366,7 +383,7 @@ FOM_mallocHook::Writer* getWriter(){
   return w;
 }
 
-void* malloc(size_t size){
+void* malloc(size_t size) throw() {
   static void* (*func)(size_t)=0;
   static size_t sizeLimit=0;
   static int maxDepth=0;
@@ -392,6 +409,7 @@ void* malloc(size_t size){
     if(!malloc_tracing_flag_sami.test_and_set()){
       std::atexit(atexit_handler);
       fwriter=getWriter();
+
       sizeLimit=(8ul<<getShift());
       maxDepth=getMaxDepth();
       if(maxDepth*sizeof(FOM_mallocHook::index_t)>maxBuff-sizeof(FOM_mallocHook::header)){
@@ -406,11 +424,18 @@ void* malloc(size_t size){
       return ret;
     }
   }
-  
+  struct timespec t1;
+  struct timespec t2;
+  clock_gettime(CLOCK_MONOTONIC,&t1);
   ret=func(size);
-  if((size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
+  clock_gettime(CLOCK_MONOTONIC,&t2);
+
+//  if((size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
+if(!malloc_tracing_flag_sami.test_and_set()){
 #ifndef __DO_GNU_BACKTRACE__
-    show_backtrace(0,size,ret,maxDepth,1);
+//    long tmp1 = t2.tv_sec - t1.tv_sec;
+//    long tmp2 = t2.tv_nsec - t1.tv_nsec;
+    show_backtrace(0,size,ret,maxDepth,1, t1, t2);
 #else
     show_backtraceGNU(0,size,ret,maxDepth);
 #endif
@@ -454,10 +479,18 @@ void* realloc(void *ptr, size_t size) throw(){
       return ret;
     }
   }
+  struct timespec t1;
+  struct timespec t2;
+  clock_gettime(CLOCK_MONOTONIC,&t1);
   ret=func(ptr, size);
-  if((size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
+  clock_gettime(CLOCK_MONOTONIC,&t2);
+
+//  if((size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
+if(!malloc_tracing_flag_sami.test_and_set()){
 #ifndef __DO_GNU_BACKTRACE__
-    show_backtrace(0,size,ret,maxDepth,2);
+//    long tmp1 = t2.tv_sec - t1.tv_sec;
+//    long tmp2 = t2.tv_nsec - t1.tv_nsec;
+    show_backtrace(0,size,ret,maxDepth,2, t1, t2);
 #else
     show_backtraceGNU(0,size,ret,maxDepth);
 #endif
@@ -466,7 +499,7 @@ void* realloc(void *ptr, size_t size) throw(){
   return ret;
 }
 
-void* calloc(size_t nobj, size_t size) {
+void* calloc(size_t nobj, size_t size) throw() {
   static void* (*func)(size_t,size_t)=0;
   static size_t sizeLimit=0;
   static int maxDepth=0;
@@ -508,14 +541,82 @@ void* calloc(size_t nobj, size_t size) {
       return ret;
     }
   }
+  struct timespec t1;
+  struct timespec t2;  
+  clock_gettime(CLOCK_MONOTONIC,&t1);
   ret=func(nobj, size);
-  if((nobj*size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
+  clock_gettime(CLOCK_MONOTONIC,&t2);
+
+//  if((nobj*size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
+if(!malloc_tracing_flag_sami.test_and_set()){
 #ifndef __DO_GNU_BACKTRACE__
-    show_backtrace(0,nobj*size,ret,maxDepth,3);
+   // long tmp1 = t2.tv_sec - t1.tv_sec;
+   // long tmp2 = t2.tv_nsec - t1.tv_nsec;
+    show_backtrace(0,nobj*size,ret,maxDepth,3, t1, t2);
 #else
     show_backtraceGNU(0,nobj*size,ret,maxDepth);
 #endif
     malloc_tracing_flag_sami.clear();
   }
   return ret;
+}
+
+void free (void *ptr){	
+  static void (*func) (void*) = 0;
+  static size_t sizeLimit=0;
+  static int maxDepth=0;
+
+  if (! func){ 
+      func = (void (*) (void*)) dlsym (RTLD_NEXT, "free");
+  sizeLimit=(8ul<<getShift());
+    maxDepth=getMaxDepth();
+    if(!initializedForkHooks.test_and_set()){
+      int retVal=pthread_atfork(&prepFork,&postForkParent,&postForkChildren);
+      if(retVal!=0){
+        std::cerr<<"forking handler registrations failed. If process is forking, sampling may not work."<<std::endl;
+      }
+    }
+
+    if(maxDepth*sizeof(FOM_mallocHook::index_t)>maxBuff-sizeof(FOM_mallocHook::header)){
+      int maxAvailDepth=(maxBuff-sizeof(FOM_mallocHook::header))/sizeof(FOM_mallocHook::index_t)-1;
+      std::cerr<<"Max stack depth is too high, please recompile with increased maxBuff. Limiting max stack depth to "<<maxAvailDepth<<std::endl;
+      maxDepth=maxAvailDepth;
+    }
+  }
+  if(!fwriter){
+    if(!malloc_tracing_flag_sami.test_and_set()){
+      std::atexit(atexit_handler);
+      fwriter=getWriter();
+
+      sizeLimit=(8ul<<getShift());
+      maxDepth=getMaxDepth();
+      if(maxDepth*sizeof(FOM_mallocHook::index_t)>maxBuff-sizeof(FOM_mallocHook::header)){
+        int maxAvailDepth=(maxBuff-sizeof(FOM_mallocHook::header))/sizeof(FOM_mallocHook::index_t)-1;
+        std::cerr<<"Max stack depth is too high, please recompile with increased maxBuff. Limiting max stack depth to "<<maxAvailDepth<<std::endl;
+        maxDepth=maxAvailDepth;
+      }
+      malloc_tracing_flag_sami.clear();
+    }else{
+      func(ptr);
+      return;
+    }
+  }
+
+  struct timespec t1;
+  struct timespec t2;
+  clock_gettime(CLOCK_MONOTONIC,&t1);
+  func(ptr);
+  clock_gettime(CLOCK_MONOTONIC,&t2);
+//if((nobj*size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
+
+if ( !malloc_tracing_flag_sami.test_and_set()){
+#ifndef __DO_GNU_BACKTRACE__
+   // long tmp1 = t2.tv_sec - t1.tv_sec;
+   // long tmp2 = t2.tv_nsec - t1.tv_nsec;
+    show_backtrace(0,0,ptr,maxDepth,0, t1, t2);
+#else
+    show_backtraceGNU(0,size,ret,maxDepth);
+#endif
+    malloc_tracing_flag_sami.clear();
+  }
 }

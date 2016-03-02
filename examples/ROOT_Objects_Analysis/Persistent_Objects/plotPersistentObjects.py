@@ -25,6 +25,7 @@ import json
 import numpy
 import sys
 import resource 
+import subprocess
 
 if os.path.isfile("FOMSummary.json"):
   f = open('FOMSummary.json')
@@ -81,7 +82,7 @@ if not os.path.isfile("All_ROOT_Objects.txt"):
 
   # save to file
   matrix = numpy.hstack([timeTmp,beginTmp,endTmp,adrTmp,lifetimes])
-  numpy.savetxt("All_ROOT_Objects.txt", matrix)
+  numpy.savetxt("All_ROOT_Objects.txt", matrix, fmt="%f %x %x %x %d")
 
   # cleanup
   del beginTmp
@@ -90,11 +91,9 @@ if not os.path.isfile("All_ROOT_Objects.txt"):
   del adrTmp
 
   dim = time.shape[0]
-  time.shape	= (dim,1)
-  begin.shape 	= (dim,1)
-  end.shape	= (dim,1)
   m = numpy.hstack([time,begin,end])
-  numpy.savetxt("Persistent_ROOT_Objects.txt",m )
+  m.shape = (3,dim)
+  numpy.savetxt("Persistent_ROOT_Objects.txt", m.T, fmt="%f %d %d")
 
 else:
   m     = numpy.loadtxt("Persistent_ROOT_Objects.txt")
@@ -205,5 +204,5 @@ f.write(cmd)
 f.close()
 
 # Execute Gnuplot and perform cleanup
-call(["gnuplot", "cmd.txt"])
+subprocess.call(["gnuplot", "cmd.txt"])
 

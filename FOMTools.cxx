@@ -30,21 +30,21 @@
 #include <Python.h>
 #include "numpy/arrayobject.h"
 #include <cstdint>
+#include "FOMTools/Streamers.hpp"
 #include "FOMTools/MergePages.hpp"
 #include "FOMTools/Parser.hpp"
 #include "FOMTools/RegionFinder.hpp"
 #include "FOMTools/Addr2Line.hpp"
 
-
 static PyObject* PyMergePages(PyObject* self, PyObject* args)
 {
-   char* inputFilename;
-   char* outputFilename;
-   if (!PyArg_ParseTuple(args, "ss", &inputFilename, &outputFilename)) return NULL;
-   MergePages(inputFilename, outputFilename);
+  char* inputFilename;
+  char* outputFilename;
+  if (!PyArg_ParseTuple(args, "ss", &inputFilename, &outputFilename)) return NULL;
+  MergePages(inputFilename, outputFilename);
 
-   Py_INCREF(Py_None);
-   return Py_None;
+  Py_INCREF(Py_None);
+  return Py_None;
 }    
 
 
@@ -77,31 +77,54 @@ static PyObject* PyParseMergedOutputFiles(PyObject * self, PyObject * args)
   dim[0] = tmp;
   PyArrayObject  *c = (PyArrayObject*)  PyArray_SimpleNewFromData(1, dim, NPY_UINT64, (void*) p.pointer);
   c->flags = NPY_C_CONTIGUOUS | NPY_WRITEABLE | NPY_OWNDATA;
-
   return PyArray_Return(c);
 }
 
 static FOM_mallocHook::RegionFinder *finder=0;
 
+namespace FOMPython{
+  static FOM_mallocHook::IndexingReader *s_InReader=0;
+  static size_t sIRdrCurrOffset=0;
+};
+
 static PyObject* PyOpenMallocFile(PyObject* self, PyObject* args)
 {
-   char* inputFilename;
-   if (!PyArg_ParseTuple(args, "s", &inputFilename)) return NULL;
-   delete finder;
-   finder = new FOM_mallocHook::RegionFinder(inputFilename);
+  char* inputFilename;
+  if (!PyArg_ParseTuple(args, "s", &inputFilename)) return NULL;
+  delete finder;
+  finder = new FOM_mallocHook::RegionFinder(inputFilename);
 
-   Py_INCREF(Py_None);
-   return Py_None;
+  Py_INCREF(Py_None);
+  return Py_None;
 
 }
 
 static PyObject* PyCloseMallocFile(PyObject* self, PyObject* args)
 {
-   delete finder;
-   finder = 0;
+  delete finder;
+  finder = 0;
 
-   Py_INCREF(Py_None);
-   return Py_None;
+  Py_INCREF(Py_None);
+  return Py_None;
+}
+
+static PyObject* PyOpenFileAsStream(PyObject* self, PyObject* args)
+{
+  char* inputFilename;
+  if (!PyArg_ParseTuple(args, "s", &inputFilename)) return NULL;
+  delete FOMPython::s_InReader;
+  FOMPython::s_InReader = new FOM_mallocHook::IndexingReader(inputFilename);
+  // Py_INCREF(Py_None);
+  // return Py_None;
+  return Py_BuildValue("K",FOMPython::s_InReader->size());
+}
+
+static PyObject* PyCloseFileAsStream(PyObject* self, PyObject* args)
+{
+  delete FOMPython::s_InReader;
+  FOMPython::s_InReader = 0;
+  Py_INCREF(Py_None);
+  return Py_None;
 }
 
 
@@ -109,8 +132,8 @@ static PyObject* PyCloseMallocFile(PyObject* self, PyObject* args)
 static PyObject* PyGetAllocationTraces(PyObject *self, PyObject * args)
 {
   if (!finder){
-     PyErr_SetString(PyExc_RuntimeError, "Open first malloc output file");
-     return NULL;}
+    PyErr_SetString(PyExc_RuntimeError, "Open first malloc output file");
+    return NULL;}
 
   int time;
   PyObject* b;
@@ -159,31 +182,31 @@ static PyObject* PyGetAllocationTraces(PyObject *self, PyObject * args)
 
     for(size_t i=0; i<result.size(); i++){
       snprintf(buffer, 300, "\nFrom 0x%lx to 0x%lx Size %lu kB at 0x%lx (%lu Bytes)\t",  result[i].getFirstPage(), result[i].getLastPage(), ((result[i].getLastPage()-result[i].getFirstPage())>>10), result[i].getAddr(), result[i].getSize());
-     outputFile << buffer;
-     auto t = result[i].getStacks();
-     for(size_t l=0; l < t.size(); l++ ){
-       for(int k=0; k < stackIDs.size(); k++){
-         if (t[l] == stackIDs[k]){
-           snprintf(buffer, 300, "\n%d\t%s", t[l], sourcelines[k].c_str());
-           outputFile << buffer;     
-           break;
-         }
-       }
-     }
-     snprintf(buffer, 300, "\n");
-     outputFile << buffer; 
+      outputFile << buffer;
+      auto t = result[i].getStacks();
+      for(size_t l=0; l < t.size(); l++ ){
+	for(int k=0; k < stackIDs.size(); k++){
+	  if (t[l] == stackIDs[k]){
+	    snprintf(buffer, 300, "\n%d\t%s", t[l], sourcelines[k].c_str());
+	    outputFile << buffer;     
+	    break;
+	  }
+	}
+      }
+      snprintf(buffer, 300, "\n");
+      outputFile << buffer; 
     }
     outputFile.close();
   }
-   Py_INCREF(Py_None);
-   return Py_None;
+  Py_INCREF(Py_None);
+  return Py_None;
 }
 
 static PyObject* PyGetObjectValidity(PyObject *self, PyObject * args)
 {
   if (!finder){
-     PyErr_SetString(PyExc_RuntimeError, "Open first malloc output file");
-     return NULL;}
+    PyErr_SetString(PyExc_RuntimeError, "Open first malloc output file");
+    return NULL;}
 
   PyObject* b;
   PyObject* e;
@@ -216,16 +239,16 @@ static PyObject* PyGetObjectValidity(PyObject *self, PyObject * args)
     unsigned long *a3 = (unsigned long*) PyArray_DATA(a2);
    
     if (!(nb == ne && nb == nt)){
-        Py_INCREF(Py_None); 
-        return Py_None;
+      Py_INCREF(Py_None); 
+      return Py_None;
     }
     std::vector<RegionInfo> regions(nb);
     
     for(size_t i = 0; i < nb; i++){
-       regions[i].pBegin = b3[i];
-       regions[i].pEnd = e3[i];
-       regions[i].t_sec = t3[i];     
-       regions[i].t_nsec = (t3[i]-regions[i].t_sec) * 1000;
+      regions[i].pBegin = b3[i];
+      regions[i].pEnd = e3[i];
+      regions[i].t_sec = t3[i];     
+      regions[i].t_nsec = (t3[i]-regions[i].t_sec) * 1000;
     }
     
     std::vector<std::vector<FOM_mallocHook::MemRecord>> result = finder->getAllocationSets(regions);
@@ -245,11 +268,11 @@ static PyObject* PyGetObjectValidity(PyObject *self, PyObject * args)
 	  if((res.getAddr() <= a3[l]) && a3[l] < (res.getAddr() + res.getSize())){
 	    p[l] = rtime;
             break;
-           }
-	 }
-       }
-     }  
-   return PyArray_Return(c); 
+	  }
+	}
+      }
+    }  
+    return PyArray_Return(c); 
   }
   Py_INCREF(Py_None);
   return Py_None;
@@ -265,19 +288,101 @@ static PyObject* PyAddress2Line(PyObject *self, PyObject * args){
  
   translate(symbolLookupTable, maps, outputFile);
 
-   Py_INCREF(Py_None);
-   return Py_None;
+  Py_INCREF(Py_None);
+  return Py_None;
 }
 
+static PyObject* PyGetNextFromSteam(PyObject *self, PyObject * args){
+  if(FOMPython::s_InReader==0){
+    PyErr_SetString(PyExc_RuntimeError, "Streaming file was not opened");
+    return NULL;
+  }
+  if(FOMPython::sIRdrCurrOffset>=FOMPython::s_InReader->size()){
+    Py_INCREF(Py_None);
+    return Py_None;
+  }
+  FOMPython::sIRdrCurrOffset++;
+  auto r = FOMPython::s_InReader->at(FOMPython::sIRdrCurrOffset);
+  if(!r.getHeader()){
+    Py_INCREF(Py_None);
+    return Py_None;  
+  }
+  int count=0;
+  auto stackArray=r.getStacks(&count);
+  PyObject* stackList=PyTuple_New(count);
+  for(int i=0;i<count;i++){
+    PyTuple_SetItem(stackList,i,PyInt_FromLong(stackArray[i]));
+  }
+  PyObject* resultList=PyList_New(7);
+  PyList_SetItem(resultList,0,Py_BuildValue("(ll)",r.getT0Sec(),r.getT0NSec()));
+  PyList_SetItem(resultList,1,Py_BuildValue("(ll)",r.getT1Sec(),r.getT1NSec()));
+  PyList_SetItem(resultList,2,Py_BuildValue("(ll)",r.getT2Sec(),r.getT2NSec()));
+  PyList_SetItem(resultList,3,Py_BuildValue("B",r.getAllocType()));
+  PyList_SetItem(resultList,4,Py_BuildValue("K",r.getAddr()));
+  PyList_SetItem(resultList,5,Py_BuildValue("K",r.getSize()));
+  PyList_SetItem(resultList,6,stackList);
+  return resultList;
+}
+
+static PyObject* PyNumRecords(PyObject *self, PyObject * args){
+  if(FOMPython::s_InReader){
+    return Py_BuildValue("K",FOMPython::s_InReader->size());
+  }
+  PyErr_SetString(PyExc_RuntimeError, "Streaming file was not opened");
+  return NULL;
+}
+
+static PyObject* PyRecordAt(PyObject *self, PyObject * args){
+  if(FOMPython::s_InReader==0){
+    PyErr_SetString(PyExc_RuntimeError, "Streaming file was not opened");
+    return NULL;
+  }
+  size_t pos=0;
+  if(!PyArg_ParseTuple(args,"K",&pos)){
+    return NULL;
+  }
+  if(pos>=FOMPython::s_InReader->size()){
+    PyErr_SetString(PyExc_RuntimeError, "Trying to access non-existent record");
+    return NULL;
+  }
+  auto r = FOMPython::s_InReader->at(pos);
+  if(!r.getHeader()){
+    Py_INCREF(Py_None);
+    return Py_None;  
+  }
+  int count=0;
+  auto stackArray=r.getStacks(&count);
+  PyObject* stackList=PyTuple_New(count);
+  for(int i=0;i<count;i++){
+    PyTuple_SetItem(stackList,i,PyInt_FromLong(stackArray[i]));
+  }
+  PyObject* resultList=PyList_New(7);
+  PyList_SetItem(resultList,0,Py_BuildValue("(ll)",r.getT0Sec(),r.getT0NSec()));
+  PyList_SetItem(resultList,1,Py_BuildValue("(ll)",r.getT1Sec(),r.getT1NSec()));
+  PyList_SetItem(resultList,2,Py_BuildValue("(ll)",r.getT2Sec(),r.getT2NSec()));
+  PyList_SetItem(resultList,3,Py_BuildValue("B",r.getAllocType()));
+  PyList_SetItem(resultList,4,Py_BuildValue("K",r.getAddr()));
+  PyList_SetItem(resultList,5,Py_BuildValue("K",r.getSize()));
+  PyList_SetItem(resultList,6,stackList);
+  return resultList;
+  
+}
+
+
 static PyMethodDef methods[]= 	{{(char *)"mergePages", (PyCFunction)PyMergePages, METH_VARARGS, NULL},
-			        {(char *)"parseMergedOutputFiles", (PyCFunction)PyParseMergedOutputFiles, METH_VARARGS, NULL},
-			        {(char *)"parseOutputFiles", (PyCFunction)PyParseOutputFiles, METH_VARARGS, NULL},
-                                {(char *)"openMallocFile", (PyCFunction)PyOpenMallocFile, METH_VARARGS, NULL},
-                                {(char *)"closeMallocFile", (PyCFunction)PyCloseMallocFile, METH_VARARGS, NULL},
-                                {(char *)"getAllocationTraces", (PyCFunction)PyGetAllocationTraces, METH_VARARGS, NULL},
-                                {(char *)"address2line", (PyCFunction)PyAddress2Line, METH_VARARGS, NULL},
-                                {(char *)"getObjectValidity", (PyCFunction)PyGetObjectValidity, METH_VARARGS, NULL},
-				{ NULL, NULL, 0, NULL }};
+				 {(char *)"parseMergedOutputFiles", (PyCFunction)PyParseMergedOutputFiles, METH_VARARGS, NULL},
+				 {(char *)"parseOutputFiles", (PyCFunction)PyParseOutputFiles, METH_VARARGS, NULL},
+				 {(char *)"openMallocFile", (PyCFunction)PyOpenMallocFile, METH_VARARGS, NULL},
+				 {(char *)"closeMallocFile", (PyCFunction)PyCloseMallocFile, METH_VARARGS, NULL},
+				 {(char *)"getAllocationTraces", (PyCFunction)PyGetAllocationTraces, METH_VARARGS, NULL},
+				 {(char *)"address2line", (PyCFunction)PyAddress2Line, METH_VARARGS, NULL},
+				 {(char *)"getObjectValidity", (PyCFunction)PyGetObjectValidity, METH_VARARGS, NULL},
+				 {(char *)"openStream", (PyCFunction)PyOpenFileAsStream, METH_VARARGS, NULL},
+				 {(char *)"closeStream", (PyCFunction)PyCloseFileAsStream, METH_VARARGS, NULL},
+				 {(char *)"next", (PyCFunction)PyGetNextFromSteam, METH_VARARGS, NULL},
+				 {(char *)"size", (PyCFunction)PyNumRecords, METH_VARARGS, NULL},
+				 {(char *)"at", (PyCFunction)PyRecordAt, METH_VARARGS, NULL},
+				 { NULL, NULL, 0, NULL }};
 
 PyMODINIT_FUNC initFOMTools(void) { (void) Py_InitModule("FOMTools", methods);  import_array();}
 

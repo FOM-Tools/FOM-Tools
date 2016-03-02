@@ -52,7 +52,6 @@ int main(int argc,char* argv[]){
   std::string inpName("");
   std::string outName("");
   struct stat sinp;
-  char* dataAddr=0;
   int c;
   while (1) {
     int option_index = 0;
@@ -62,7 +61,6 @@ int main(int argc,char* argv[]){
       {"output", 1, 0, 'o'},
       {0, 0, 0, 0}
     };
-
     c = getopt_long(argc, argv, "hi:o:",
 		    long_options, &option_index);
     if (c == -1)
@@ -123,56 +121,122 @@ int main(int argc,char* argv[]){
   ssize_t writtenBytes=0;
   size_t totBytes=0;
   struct timespec tstart,tend;
-  int rc=clock_gettime(CLOCK_MONOTONIC,&tstart);
-  FOM_mallocHook::Reader *rdr=0;
-  
-  try{
-    rdr=new FOM_mallocHook::Reader(inpName);
-  }catch(std::exception &ex){
-    fprintf(stderr,"Caught exception %s\n",ex.what());
-    exit(EXIT_FAILURE);
+  struct stat st;
+  if(lstat(inpName.c_str(),&st)){
+    std::cerr<<"Can't stat input file \""<<inpName<<"\". Check that file exists and readeable"<<std::endl;
   }
-  size_t nRecords=rdr->size();
-  printf("Starting conversion\n");
-  for(size_t t=0;t<nRecords;t++){
-    auto memRec=rdr->at(t);
-    auto hdr=memRec.getHeader();
-    buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,
-		      "%ld.%03ld %d 0x%lx 0x%lx 0x%lx %ld :",
-		      hdr->tsec,
-		      (long)(hdr->tnsec*msecRes),
-		      hdr->allocType,
-		      ((hdr->addr)&(~pageMask)),
-		      ((hdr->addr+hdr->size)|(pageMask)),
-		      hdr->addr, hdr->size);
-    int nStacks=0;
-    auto stIds=memRec.getStacks(&nStacks);
-    
-    for(int i=0;i<nStacks;i++){
-      buffPos+=snprintf(buff+buffPos,maxBuf-buffPos," %u",*(stIds+i));
-    }
-    buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,"\n");
-    writtenBytes=write(outFile,buff,buffPos);
-    if(writtenBytes!=buffPos){
-      if(writtenBytes==-1){
-	handle_error("write failed");
+  if(st.st_size> (7<<30)){//"file is too big, just use indexer to access it"
+    std::cout<<"File is too big ("<<st.st_size<<" B) using indexer"<<std::endl;
+    int rc=clock_gettime(CLOCK_MONOTONIC,&tstart);
+    FOM_mallocHook::IndexingReader *r=0;
+    try{
+      r=new FOM_mallocHook::IndexingReader(inpName);
+      int rc=clock_gettime(CLOCK_MONOTONIC,&tend);
+      long ds=(tend.tv_sec-tstart.tv_sec);
+      long dns=(tend.tv_nsec-tstart.tv_nsec);
+      if(dns<0){
+	ds--;
+	dns+=1000000000;
       }
-      fprintf(stderr,"Buffer written partially\n");
+      dns=dns/1000000.;
+      printf("Scanning file %s took %lu.%03lu seconds\n",inpName.c_str(),ds,dns);
+    }catch(std::exception &ex){
+      fprintf(stderr,"Caught exception %s\n",ex.what());
       exit(EXIT_FAILURE);
     }
-    totBytes+=writtenBytes;
-    buffPos=0;
-    nrecords++;
+    size_t nRecords=r->size();
+    printf("Starting conversion of %ld records, (%ld x %d B)\n",nRecords,r->indexedSize(),sizeof(FOM_mallocHook::RecordIndex));
+    for(size_t t=0;t<nRecords;t++){
+      auto memRec=r->at(t);
+      auto hdr=memRec.getHeader();
+      buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,
+			"%ld.%ld %d 0x%lx %ld %ld.%ld",
+			hdr->tsec,
+			(long)(hdr->tnsec),//*msecRes),
+			hdr->allocType,
+			//((hdr->addr)&(~pageMask)),
+			//((hdr->addr+hdr->size)|(pageMask)),
+			hdr->addr, hdr->size, hdr->timediffsec, hdr->timediffnsec);
+      int nStacks=0;
+      auto stIds=memRec.getStacks(&nStacks);
+      for(int i=0;i<nStacks;i++){
+	buffPos+=snprintf(buff+buffPos,maxBuf-buffPos," %u",*(stIds+i));
+      }
+      buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,"\n");
+      writtenBytes=write(outFile,buff,buffPos);
+      if(writtenBytes!=buffPos){
+	if(writtenBytes==-1){
+	  handle_error("write failed");
+	}
+	fprintf(stderr,"Buffer written partially\n");
+	exit(EXIT_FAILURE);
+      }
+      totBytes+=writtenBytes;
+      buffPos=0;
+      nrecords++;
+    }
+    rc=clock_gettime(CLOCK_MONOTONIC,&tend);
+    delete r;
+    long ds=(tend.tv_sec-tstart.tv_sec);
+    long dns=(tend.tv_nsec-tstart.tv_nsec);
+    if(dns<0){
+      ds--;
+      dns+=1000000000;
+    }
+    dns=dns/1000000.;
+    printf("Read %ld records and written %lu bytes to %s in %lu.%03lu seconds\n",nrecords,totBytes,outName.c_str(),ds,dns);
+  }else{
+    int rc=clock_gettime(CLOCK_MONOTONIC,&tstart);
+    FOM_mallocHook::Reader *rdr=0;
+    try{
+      rdr=new FOM_mallocHook::Reader(inpName);
+    }catch(std::exception &ex){
+      fprintf(stderr,"Caught exception %s\n",ex.what());
+      exit(EXIT_FAILURE);
+    }
+    size_t nRecords=rdr->size();
+    printf("Starting conversion\n");
+    for(size_t t=0;t<nRecords;t++){
+      auto memRec=rdr->at(t);
+      auto hdr=memRec.getHeader();
+      buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,
+			"%ld.%ld %d 0x%lx %ld %ld.%ld",
+			hdr->tsec,
+			(long)(hdr->tnsec),//*msecRes),
+			hdr->allocType,
+			//((hdr->addr)&(~pageMask)),
+			//((hdr->addr+hdr->size)|(pageMask)),
+			hdr->addr, hdr->size, hdr->timediffsec, hdr->timediffnsec);
+      int nStacks=0;
+      auto stIds=memRec.getStacks(&nStacks);
+    
+      for(int i=0;i<nStacks;i++){
+	buffPos+=snprintf(buff+buffPos,maxBuf-buffPos," %u",*(stIds+i));
+      }
+      buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,"\n");
+      writtenBytes=write(outFile,buff,buffPos);
+      if(writtenBytes!=buffPos){
+	if(writtenBytes==-1){
+	  handle_error("write failed");
+	}
+	fprintf(stderr,"Buffer written partially\n");
+	exit(EXIT_FAILURE);
+      }
+      totBytes+=writtenBytes;
+      buffPos=0;
+      nrecords++;
+    }
+    rc=clock_gettime(CLOCK_MONOTONIC,&tend);
+    delete rdr;
+    long ds=(tend.tv_sec-tstart.tv_sec);
+    long dns=(tend.tv_nsec-tstart.tv_nsec);
+    if(dns<0){
+      ds--;
+      dns+=1000000000;
+    }
+    dns=dns/1000000.;
+    printf("Read %ld records and written %lu bytes to %s in %lu.%03lu seconds\n",nrecords,totBytes,outName.c_str(),ds,dns);
   }
-  rc=clock_gettime(CLOCK_MONOTONIC,&tend);
-  long ds=(tend.tv_sec-tstart.tv_sec);
-  long dns=(tend.tv_nsec-tstart.tv_nsec);
-  if(dns<0){
-    ds--;
-    dns+=1000000000;
-  }
-  dns=dns/1000000.;
-  printf("Read %ld records and written %lu bytes to %s in %lu.%03lu seconds\n",nrecords,totBytes,outName.c_str(),ds,dns);
-  munmap(dataAddr,sinp.st_size);
   return 0;
+
 }

@@ -27,6 +27,8 @@
 #include <fstream>
 #include <fcntl.h>
 #include <ctime>
+#include <iostream>
+#include <bitset>
 
 #define PAGEMAP_INFOFIELD 8
 
@@ -36,7 +38,6 @@ uint64_t readValue, fileOffset,fileEnd;
 char pathBuffer [0x100] = {};
 unsigned long pagesize = getpagesize();
 static double msecResolution = 1.0/1000000;
-
 static PyObject* analyze(PyObject * self, PyObject * args){ 
    
    int pid; char* tmp1 = NULL; char* tmp2 = NULL; int iteration; char* filename;
@@ -80,6 +81,7 @@ static PyObject* analyze(PyObject * self, PyObject * args){
 
      snprintf(buffer, 300, "%d\t0x%lx\t%lu\t%1d%1d\t%1d%1d\n",iteration,adr,adr,(readValue&9223372036854775808ull)>0,(readValue&4611686018427387904ull)>0,(readValue&2305843009213693952ull)>0,(readValue&36028797018963968ull)>0);
      outputFile<<buffer;
+     std::cout << std::bitset<64>(readValue) << std::endl;
      fileOffset += sizeof(readValue);
      adr = adr + pagesize;
    }
