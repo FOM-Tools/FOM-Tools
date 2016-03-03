@@ -1,4 +1,4 @@
- #
+#
  #  Copyright (c) CERN 2015
  #
  #  Authors:
@@ -93,7 +93,8 @@ if not os.path.isfile("All_ROOT_Objects.txt"):
   dim = time.shape[0]
   m = numpy.hstack([time,begin,end])
   m.shape = (3,dim)
-  numpy.savetxt("Persistent_ROOT_Objects.txt", m.T, fmt="%f %d %d")
+  numpy.savetxt("Persistent_ROOT_Objects.txt",m.T , fmt="%f %d %d")
+
 
 else:
   m     = numpy.loadtxt("Persistent_ROOT_Objects.txt")
@@ -205,4 +206,3 @@ f.close()
 
 # Execute Gnuplot and perform cleanup
 subprocess.call(["gnuplot", "cmd.txt"])
-
