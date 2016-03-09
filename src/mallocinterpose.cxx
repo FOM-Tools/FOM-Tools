@@ -213,8 +213,6 @@ void show_backtrace (size_t size,void* addr,int depth,int allocType, uint64_t t1
   FOM_mallocHook::header *hdr=(FOM_mallocHook::header*)(fileBuff());
   hdr->tstart = t1;                  //time sec
   hdr->treturn = t2;
-  hdr->allocType=(char)allocType;
-  hdr->addr=(uintptr_t)addr;                       //returned addres
   hdr->size=size;                       //size of allocation
   FOM_mallocHook::index_t *stackRecord=(FOM_mallocHook::index_t*)(hdr+1);
   //if (t1.tv_sec-starttime > 1000 && addr != 0 && size > 0){ //skip init time with malloc hook
@@ -257,14 +255,19 @@ void show_backtrace (size_t size,void* addr,int depth,int allocType, uint64_t t1
   }
   struct timespec t3;
   int rc=clock_gettime(CLOCK_MONOTONIC,&t3);
-  hdr->tend = t3.tv_sec*1000000000l+t3.tv_nsec;
-  if(allocType==2){//realloc write free first
+  if(allocType==2){//realloc write fake free first
     hdr->count=0;
+    hdr->addr=(uintptr_t)ra_addr;
     hdr->allocType=0;
+    hdr->treturn=t1;
+    hdr->tend=t1;
     fwriter->writeRecord(hdr);
+    hdr->tstart=t1+1;
+    hdr->treturn=t2;
   }
+  hdr->addr=(uintptr_t)addr;                       //returned addres
   hdr->count=count;
-  hdr->allocType=2;
+  hdr->allocType=(char)allocType;
   rc=clock_gettime(CLOCK_MONOTONIC,&t3);
   hdr->tend = t3.tv_sec*1000000000l+t3.tv_nsec;
   fwriter->writeRecord(hdr);
