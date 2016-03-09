@@ -29,7 +29,7 @@ bool test(size_t t){
   if(max>t)max=t;
   for(int i=0;i<max;i++){
     p[0]=i*3.1415926;
-    p[t]=i*3.1415926;
+    p[i]=i*3.1415926;
   }
   std::string s;
   std::cout<<"Allocated "<<t<<" doubles at "<<std::hex
@@ -44,7 +44,7 @@ bool test(size_t t){
     std::cout<<" Failed!"<<std::endl;
   }
   std::cout<<"Trying realloc ";
-  dummMem=realloc(dummMem,t+t/2);
+  dummMem=realloc(dummMem,(t+t/2)*sizeof(double));
   if(dummMem!=0){
     std::cout<<" Succeeded @ "<<dummMem<<" with size "<<t+t/2<<std::endl;
   }else{
@@ -56,6 +56,7 @@ bool test(size_t t){
 }
 
 TEST(FOMTools, malloc_hook) {
+  //void testHook(){
   bool success(true);
   std::vector<int> vals{1,5,6,8,9,10,11,12,14};
   for(size_t i=0;i<vals.size();i++){
@@ -90,5 +91,6 @@ TEST(FOMTools, malloc_hook) {
 
 int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
+   return RUN_ALL_TESTS();
+  //testHook();
 }

@@ -113,6 +113,7 @@ int main(int argc,char* argv[]){
   }
   if(rdr){
     auto fs=rdr->getFileStats();
+    fs->print();
     std::cout<<"Commandline was: "<<std::endl;
     int i=0;
     for(auto &c:fs->getCmdLine()){

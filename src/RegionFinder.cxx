@@ -61,7 +61,7 @@ std::vector<FOM_mallocHook::MemRecord> FOM_mallocHook::RegionFinder::getAllocati
   } else if(t==FOM_mallocHook::RegionFinder::AFTER){
     for(size_t t=0;t<nRecords;t++){
       const auto &mr=m_rdr->at(t);
-      if(mr.getTimeSec()<ri.t_sec || (mr.getTimeSec()==ri.t_sec && mr.getTimeNSec()<ri.t_nsec) ){
+      if(mr.getTStart()<ri.alloc_time){
 	continue;
       }
       auto ms=mr.getFirstPage();
@@ -90,7 +90,7 @@ std::vector<FOM_mallocHook::MemRecord> FOM_mallocHook::RegionFinder::getAllocati
   }else{
     for(size_t t=0;t<nRecords;t++){
       const auto &mr=m_rdr->at(t);
-      if(mr.getTimeSec()>ri.t_sec || (mr.getTimeSec()==ri.t_sec && mr.getTimeNSec()>ri.t_nsec) ){
+      if(mr.getTStart()>ri.alloc_time ){
 	continue;
       }
       auto ms=mr.getFirstPage();
@@ -163,7 +163,7 @@ std::vector<std::vector<FOM_mallocHook::MemRecord> > FOM_mallocHook::RegionFinde
 	const auto &ri=rVec[k];
 	auto &regions=sregions[k];
 	
-	if(mr.getTimeSec()<ri.t_sec || (mr.getTimeSec()==ri.t_sec && mr.getTimeNSec()<ri.t_nsec) ){
+	if(mr.getTStart()<ri.alloc_time){
 	  continue;
 	}
 	if(ri.pBegin<me){ // rs<me
@@ -195,7 +195,7 @@ std::vector<std::vector<FOM_mallocHook::MemRecord> > FOM_mallocHook::RegionFinde
       for(size_t k=0;k<nSets;k++){
 	const auto &ri=rVec[k];
 	auto &regions=sregions[k];
-	if(mr.getTimeSec()>ri.t_sec || (mr.getTimeSec()==ri.t_sec && mr.getTimeNSec()>ri.t_nsec) ){
+	if(mr.getTStart()>ri.alloc_time){
 	  continue;
 	}
 	if(ri.pBegin<me){ // rs<me

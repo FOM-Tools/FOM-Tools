@@ -157,7 +157,7 @@ static PyObject* PyGetAllocationTraces(PyObject *self, PyObject * args)
     RegionInfo r; 
     r.pBegin = begin[0];
     r.pEnd   = end[0];
-    r.t_sec  = time;
+    r.alloc_time  = time;
     std::ofstream outputFile;
     outputFile.open(filename); 
     char buffer[300];
@@ -225,7 +225,7 @@ static PyObject* PyGetObjectValidity(PyObject *self, PyObject * args)
 
     b2 = PyArray_FROM_OTF(b, NPY_UINT64, NPY_IN_ARRAY);
     e2 = PyArray_FROM_OTF(e, NPY_UINT64, NPY_IN_ARRAY);
-    t2 = PyArray_FROM_OTF(t, NPY_DOUBLE, NPY_IN_ARRAY);
+    t2 = PyArray_FROM_OTF(t, NPY_UINT64, NPY_IN_ARRAY);
     a2 = PyArray_FROM_OTF(a, NPY_UINT64, NPY_IN_ARRAY);
 
     size_t nb = PyArray_DIM(b2,0);
@@ -235,7 +235,7 @@ static PyObject* PyGetObjectValidity(PyObject *self, PyObject * args)
 
     unsigned long *b3 = (unsigned long*) PyArray_DATA(b2);
     unsigned long *e3 = (unsigned long*) PyArray_DATA(e2);
-    double *t3        = (double*) PyArray_DATA(t2);
+    uint64_t *t3      = (uint64_t*) PyArray_DATA(t2);
     unsigned long *a3 = (unsigned long*) PyArray_DATA(a2);
    
     if (!(nb == ne && nb == nt)){
@@ -247,26 +247,26 @@ static PyObject* PyGetObjectValidity(PyObject *self, PyObject * args)
     for(size_t i = 0; i < nb; i++){
       regions[i].pBegin = b3[i];
       regions[i].pEnd = e3[i];
-      regions[i].t_sec = t3[i];     
-      regions[i].t_nsec = (t3[i]-regions[i].t_sec) * 1000;
+      regions[i].alloc_time = t3[i];     
     }
     
     std::vector<std::vector<FOM_mallocHook::MemRecord>> result = finder->getAllocationSets(regions);
     
     npy_intp dim[1];
     dim[0] = nb;
-    double* p = (double*) malloc(sizeof(double)*nb);
-    PyArrayObject  *c = (PyArrayObject*)  PyArray_SimpleNewFromData(1, dim, NPY_DOUBLE, (void*) p);
+    uint64_t* p = (uint64_t*) malloc(sizeof(uint64_t)*nb);
+    PyArrayObject  *c = (PyArrayObject*)  PyArray_SimpleNewFromData(1, dim, NPY_UINT64, (void*) p);
     c->flags = (NPY_C_CONTIGUOUS | NPY_WRITEABLE | NPY_OWNDATA);
     
     for(size_t l=0; l<result.size();l++){ 
-      p[l] = -1.0;
+      p[l] = 0;
       for(size_t i=0; i<result[l].size(); i++){
         const auto &res=result[l][i];
-        double rtime=res.getTimeSec()+res.getTimeNSec()*1.e-9;
-        if ((rtime-t3[l])>0.000999){
+        //double rtime=res.getTimeSec()+res.getTimeNSec()*1.e-9;
+        //if ((rtime-t3[l])>0){
+        if ((res.getTStart()-t3[l])>0){
 	  if((res.getAddr() <= a3[l]) && a3[l] < (res.getAddr() + res.getSize())){
-	    p[l] = rtime;
+	    p[l] = res.getTStart();
             break;
 	  }
 	}
@@ -314,9 +314,9 @@ static PyObject* PyGetNextFromSteam(PyObject *self, PyObject * args){
     PyTuple_SetItem(stackList,i,PyInt_FromLong(stackArray[i]));
   }
   PyObject* resultList=PyList_New(7);
-  PyList_SetItem(resultList,0,Py_BuildValue("(ll)",r.getT0Sec(),r.getT0NSec()));
-  PyList_SetItem(resultList,1,Py_BuildValue("(ll)",r.getT1Sec(),r.getT1NSec()));
-  PyList_SetItem(resultList,2,Py_BuildValue("(ll)",r.getT2Sec(),r.getT2NSec()));
+  PyList_SetItem(resultList,0,Py_BuildValue("K",r.getTStart()));
+  PyList_SetItem(resultList,1,Py_BuildValue("K",r.getTReturn()));
+  PyList_SetItem(resultList,2,Py_BuildValue("K",r.getTEnd()));
   PyList_SetItem(resultList,3,Py_BuildValue("B",r.getAllocType()));
   PyList_SetItem(resultList,4,Py_BuildValue("K",r.getAddr()));
   PyList_SetItem(resultList,5,Py_BuildValue("K",r.getSize()));
@@ -357,9 +357,9 @@ static PyObject* PyRecordAt(PyObject *self, PyObject * args){
     PyTuple_SetItem(stackList,i,PyInt_FromLong(stackArray[i]));
   }
   PyObject* resultList=PyList_New(7);
-  PyList_SetItem(resultList,0,Py_BuildValue("(ll)",r.getT0Sec(),r.getT0NSec()));
-  PyList_SetItem(resultList,1,Py_BuildValue("(ll)",r.getT1Sec(),r.getT1NSec()));
-  PyList_SetItem(resultList,2,Py_BuildValue("(ll)",r.getT2Sec(),r.getT2NSec()));
+  PyList_SetItem(resultList,0,Py_BuildValue("K",r.getTStart()));
+  PyList_SetItem(resultList,1,Py_BuildValue("K",r.getTReturn()));
+  PyList_SetItem(resultList,2,Py_BuildValue("K",r.getTEnd()));
   PyList_SetItem(resultList,3,Py_BuildValue("B",r.getAllocType()));
   PyList_SetItem(resultList,4,Py_BuildValue("K",r.getAddr()));
   PyList_SetItem(resultList,5,Py_BuildValue("K",r.getSize()));

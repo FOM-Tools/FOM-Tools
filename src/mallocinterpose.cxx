@@ -48,6 +48,7 @@
 static std::atomic_flag malloc_tracing_flag_sami = ATOMIC_FLAG_INIT;
 static std::atomic_flag calloc_tracing_flag_sami = ATOMIC_FLAG_INIT;
 static std::atomic_flag initializedForkHooks = ATOMIC_FLAG_INIT;
+static bool captureEnabled = true;
 
 #define __MAXBUFF__ 4096
 static int maxBuff=__MAXBUFF__;
@@ -60,16 +61,32 @@ struct timespec tp;
 int rc=clock_gettime(CLOCK_MONOTONIC,&tp);
 static long starttime = (long)tp.tv_sec;
 
-//static int buffPos=0;
-//static FILE* s_OutFil=0;
 static FOM_mallocHook::Writer* fwriter=0;
+FOM_mallocHook::Writer*& currWriter(FOM_mallocHook::Writer* w){
+  static FOM_mallocHook::Writer* wLocal=0;
+  if(w){
+    wLocal=w;
+    //std::cerr<<"Setting wLocal to "<<(void*)w<<" curr value="<<(void*)wLocal<<std::endl;
+  }
+  //std::cerr<<" currWriter returning="<<(void*)wLocal<<" @pid="<<getpid()<<std::endl;
+  return wLocal;
+}
+
 static int dlsymBuffPos=0;
-//static double msecRes=1.0/1000000;
+
+
 extern "C" {
   void* malloc(size_t size) throw();
   void* realloc(void* ptr,size_t size) throw();
   void* calloc(size_t n,size_t s) throw();
   void free(void* ptr);
+  bool mallocHookSetCapture(bool b);
+}
+
+bool  mallocHookSetCapture(bool b){
+  bool old(captureEnabled);
+  captureEnabled=b;
+  return old;
 }
 
 char* dlsymBuff(){
@@ -86,6 +103,7 @@ std::vector<std::string>& symNames(){
   static auto symNames=new std::vector<std::string>();
   return *symNames;
 }
+
 const char* getOutputFileName();
 
 
@@ -103,7 +121,10 @@ static FOM_mallocHook::MallocBuildInfo *mhbuildInfo=0;
 
 //debug with set exec-wrapper env 'LD_PRELOAD=...'
 void atexit_handler(){
-  if(fwriter==0){
+  FOM_mallocHook::Writer*& FWriter(currWriter(0));
+  //std::cerr<<__PRETTY_FUNCTION__<<" @pid "<<getpid()<<std::endl;
+  if(!FWriter){
+    //std::cerr<<"writer is 0 @pid="<<getpid()<<std::endl;
     return;
   }
   malloc_tracing_flag_sami.test_and_set();
@@ -144,8 +165,8 @@ void atexit_handler(){
     fclose(tmp);
   }
   //std::cerr << "Counter " << counter << std::endl;
-  delete fwriter;
-  fwriter=0;
+  delete FWriter;
+  FWriter=0;
   delete mhbuildInfo;
   mhbuildInfo=0;
   delete &symNames();
@@ -154,44 +175,47 @@ void atexit_handler(){
 
 void prepFork(){
   if(fwriter){
-    if(!malloc_tracing_flag_sami.test_and_set()){
-      fwriter->closeFile(false);
-      malloc_tracing_flag_sami.clear();
-    }
+    //if(!malloc_tracing_flag_sami.test_and_set()){
+    while(malloc_tracing_flag_sami.test_and_set(std::memory_order_acquire));//spin until get the lock
+    fwriter->closeFile(false);
+    //malloc_tracing_flag_sami.clear();
+    malloc_tracing_flag_sami.clear(std::memory_order_release);
+    //}
   }
-
 }
 
 void postForkParent(){
   if(fwriter){
+    while(malloc_tracing_flag_sami.test_and_set(std::memory_order_acquire));//spin until get the lock
     fwriter->reopenFile(true);
+    malloc_tracing_flag_sami.clear(std::memory_order_release);
   }
 }
 
 void postForkChildren(){
   if(fwriter){
-    if(!malloc_tracing_flag_sami.test_and_set()){
-      delete fwriter;
-      fwriter=getWriter();
-      malloc_tracing_flag_sami.clear();
-    }
+    while(malloc_tracing_flag_sami.test_and_set(std::memory_order_acquire));//spin until get the lock
+    //if(!malloc_tracing_flag_sami.test_and_set()){
+    delete fwriter;
+    fwriter=getWriter();
+    currWriter(fwriter);
+    malloc_tracing_flag_sami.clear(std::memory_order_release);
+    //}
   }
   //std::cout<<"Called postForkChildren @ pid="<<getpid()<<std::endl;
   std::atexit(atexit_handler);
 }
 
-void show_backtrace (FILE* f,size_t size,void* addr,int depth,int allocType, timespec t1, timespec t2) {
+void show_backtrace (size_t size,void* addr,int depth,int allocType, uint64_t t1, uint64_t t2, void* ra_addr) {
   int count=0;
-//  struct timespec tp;
-//  int rc=clock_gettime(CLOCK_MONOTONIC,&tp);
+  //  struct timespec tp;
+  //  int rc=clock_gettime(CLOCK_MONOTONIC,&tp);
   FOM_mallocHook::header *hdr=(FOM_mallocHook::header*)(fileBuff());
-  hdr->tsec=(long)t1.tv_sec;                  //time sec
-  hdr->tnsec=(long)t1.tv_nsec;                 //time
+  hdr->tstart = t1;                  //time sec
+  hdr->treturn = t2;
   hdr->allocType=(char)allocType;
   hdr->addr=(uintptr_t)addr;                       //returned addres
   hdr->size=size;                       //size of allocation
-  hdr->timediffsec = (long)t2.tv_sec;
-  hdr->timediffnsec = (long)t2.tv_nsec;
   FOM_mallocHook::index_t *stackRecord=(FOM_mallocHook::index_t*)(hdr+1);
   //if (t1.tv_sec-starttime > 1000 && addr != 0 && size > 0){ //skip init time with malloc hook
   if (addr != 0 && size > 0){
@@ -199,47 +223,53 @@ void show_backtrace (FILE* f,size_t size,void* addr,int depth,int allocType, tim
     unw_word_t ip;
     unw_getcontext(&uc);
     unw_init_local(&cursor, &uc);
-   while (unw_step(&cursor) > 0 && count<depth) {
-    unw_get_reg(&cursor, UNW_REG_IP, &ip);
-    auto it=symMap().insert(std::make_pair(ip,symMap().size()));
-    //fprintf(stderr," ip=%ld\n",(long)ip);
-    if(it.second){// new IP
-      if(symMap().size()>=std::numeric_limits<FOM_mallocHook::index_t>::max()){
-	std::cerr<<" Malloc hook has reached its indexing capacity. Please recompile with a wider index_t. Aborting!"<<std::endl;
-	std::abort();
-      }
-      unw_word_t  offp=0,sp=0;
-      size_t bufflen=1024;
-      char funcName[bufflen];
-      funcName[0]='\0';
-      char strBuf[1400];
-
-      int rc=unw_get_reg(&cursor, UNW_REG_SP, &sp);
-      if(rc!=0){
-	snprintf(strBuf,1400,"FAILED  @ ip= 0 sp= 0 RC=%d",rc);
-      }else{
-	rc=unw_get_proc_name (&cursor, funcName, bufflen, &offp);
-	if(rc!=0){
-	  snprintf(strBuf,1400,"FAILED @ ip= 0x%lx sp= 0x%lx %d",(long)ip,(long)sp,rc);
-	}else{
-	  snprintf(strBuf,1400,"%s + 0x%lx @ ip= 0x%lx sp= 0x%lx",funcName,(long)offp,(long)ip,(long)sp);
-	}
-      }
-   
-      symNames().emplace_back(strBuf);
+    if(symMap().size()>=std::numeric_limits<FOM_mallocHook::index_t>::max()){
+      std::cerr<<" Malloc hook has reached its indexing capacity. Please recompile with a wider index_t. Aborting!"<<std::endl;
+      std::abort();
     }
-    *stackRecord=it.first->second;
-    stackRecord++;
-    count++;
-  }}
-  hdr->count=count;
+    while (unw_step(&cursor) > 0 && count<depth) {
+      unw_get_reg(&cursor, UNW_REG_IP, &ip);
+      auto it=symMap().insert(std::make_pair(ip,symMap().size()));
+      //fprintf(stderr," ip=%ld\n",(long)ip);
+      if(it.second){// new IP
+	unw_word_t  offp=0,sp=0;
+	size_t bufflen=1024;
+	char funcName[bufflen];
+	funcName[0]='\0';
+	char strBuf[1400];
+	int rc=unw_get_reg(&cursor, UNW_REG_SP, &sp);
+	if(rc!=0){
+	  snprintf(strBuf,1400,"FAILED  @ ip= 0 sp= 0 RC=%d",rc);
+	}else{
+	  rc=unw_get_proc_name (&cursor, funcName, bufflen, &offp);
+	  if(rc!=0){
+	    snprintf(strBuf,1400,"FAILED @ ip= 0x%lx sp= 0x%lx %d",(long)ip,(long)sp,rc);
+	  }else{
+	    snprintf(strBuf,1400,"%s + 0x%lx @ ip= 0x%lx sp= 0x%lx",funcName,(long)offp,(long)ip,(long)sp);
+	  }
+	}
+	symNames().emplace_back(strBuf);
+      }
+      *stackRecord=it.first->second;
+      stackRecord++;
+      count++;
+    }
+  }
   struct timespec t3;
   int rc=clock_gettime(CLOCK_MONOTONIC,&t3);
-  hdr->timediff2sec = (long)t3.tv_sec;
-  hdr->timediff2nsec = (long)t3.tv_nsec;
-  fwriter->writeRecord(FOM_mallocHook::MemRecord(fileBuff()));
+  hdr->tend = t3.tv_sec*1000000000l+t3.tv_nsec;
+  if(allocType==2){//realloc write free first
+    hdr->count=0;
+    hdr->allocType=0;
+    fwriter->writeRecord(hdr);
+  }
+  hdr->count=count;
+  hdr->allocType=2;
+  rc=clock_gettime(CLOCK_MONOTONIC,&t3);
+  hdr->tend = t3.tv_sec*1000000000l+t3.tv_nsec;
+  fwriter->writeRecord(hdr);
   counter = counter + 1;
- }
+}
 
 #ifdef __DO_GNU_BACKTRACE__
 void show_backtrace_GNU (FILE* f,size_t size,void* addr,int depth) {
@@ -281,7 +311,7 @@ int getShift(){
 }
 
 int getMaxDepth(){
-  return 20;
+  //return 20;
   char* v=getenv("MALLOC_INTERPOSE_DEPTH");
   int s=10;
   if(v){
@@ -290,7 +320,7 @@ int getMaxDepth(){
     if((errno==ERANGE)||(errno==EINVAL)){
       errno=0;
       //fprintf(stderr,"MalInt:%d Frame depth limit= %d (MALLOC_INTERPOSE_DEPTH)\n",__LINE__,10);
-      return 10;//default 10 frames
+      return 20;//default 20 frames
     }
     //fprintf(stderr,"MalInt:%d Frame depth limit= %d (MALLOC_INTERPOSE_DEPTH)\n",__LINE__,s);
   }
@@ -379,7 +409,19 @@ FOM_mallocHook::Writer* getWriter(){
     snprintf(buff,1024,"mallocHook.%u.fom",getpid());
     fileN=buff;
   }
-  FOM_mallocHook::Writer *w=new FOM_mallocHook::Writer(fileN);
+  char *com=getenv("MALLOC_INTERPOSE_COMPRESSION");
+  int compress=0;
+  if(com){
+    char* end;
+    compress=std::strtol(com,&end,10);
+  }
+  size_t bucketSize=65536;
+  char *buck=getenv("MALLOC_INTERPOSE_BUCKET_SIZE");
+  if(com){
+    char* end;
+    bucketSize=std::strtoull(buck,&end,10);
+  }
+  FOM_mallocHook::Writer *w=new FOM_mallocHook::Writer(fileN,compress,bucketSize);
   return w;
 }
 
@@ -409,7 +451,7 @@ void* malloc(size_t size) throw() {
     if(!malloc_tracing_flag_sami.test_and_set()){
       std::atexit(atexit_handler);
       fwriter=getWriter();
-
+      currWriter(fwriter);
       sizeLimit=(8ul<<getShift());
       maxDepth=getMaxDepth();
       if(maxDepth*sizeof(FOM_mallocHook::index_t)>maxBuff-sizeof(FOM_mallocHook::header)){
@@ -429,13 +471,18 @@ void* malloc(size_t size) throw() {
   clock_gettime(CLOCK_MONOTONIC,&t1);
   ret=func(size);
   clock_gettime(CLOCK_MONOTONIC,&t2);
-
-//  if((size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
-if(!malloc_tracing_flag_sami.test_and_set()){
+  
+  //  if((size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
+  if( 
+#ifdef ENABLE_USER_CONTROL
+     captureEnabled &&
+#endif
+     !malloc_tracing_flag_sami.test_and_set()
+      ){
 #ifndef __DO_GNU_BACKTRACE__
-//    long tmp1 = t2.tv_sec - t1.tv_sec;
-//    long tmp2 = t2.tv_nsec - t1.tv_nsec;
-    show_backtrace(0,size,ret,maxDepth,1, t1, t2);
+    show_backtrace(size,ret,maxDepth,1, 
+		   t1.tv_sec*1000000000l+t1.tv_nsec, 
+		   t2.tv_sec*1000000000l+t2.tv_nsec,0);
 #else
     show_backtraceGNU(0,size,ret,maxDepth);
 #endif
@@ -464,6 +511,7 @@ void* realloc(void *ptr, size_t size) throw(){
     if(!malloc_tracing_flag_sami.test_and_set()){
       std::atexit(atexit_handler);
       fwriter=getWriter();
+      currWriter(fwriter);
       sizeLimit=(8ul<<getShift());
       maxDepth=getMaxDepth();
       if(maxDepth*sizeof(FOM_mallocHook::index_t)>maxBuff-sizeof(FOM_mallocHook::header)){
@@ -485,16 +533,21 @@ void* realloc(void *ptr, size_t size) throw(){
   ret=func(ptr, size);
   clock_gettime(CLOCK_MONOTONIC,&t2);
 
-//  if((size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
-if(!malloc_tracing_flag_sami.test_and_set()){
+  //  if((size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
+  if( 
+#ifdef ENABLE_USER_CONTROL
+     captureEnabled &&
+#endif
+     !malloc_tracing_flag_sami.test_and_set()
+      ){
 #ifndef __DO_GNU_BACKTRACE__
-//    long tmp1 = t2.tv_sec - t1.tv_sec;
-//    long tmp2 = t2.tv_nsec - t1.tv_nsec;
-    show_backtrace(0,size,ret,maxDepth,2, t1, t2);
+    show_backtrace(size,ret,maxDepth,2,
+		   t1.tv_sec*1000000000l+t1.tv_nsec, 
+		   t2.tv_sec*1000000000l+t2.tv_nsec,ptr);
 #else
     show_backtraceGNU(0,size,ret,maxDepth);
 #endif
-    malloc_tracing_flag_sami.clear();
+  malloc_tracing_flag_sami.clear();
   }
   return ret;
 }
@@ -527,6 +580,7 @@ void* calloc(size_t nobj, size_t size) throw() {
     if(!malloc_tracing_flag_sami.test_and_set()){
       std::atexit(atexit_handler);
       fwriter=getWriter();
+      currWriter(fwriter);
       sizeLimit=(8ul<<getShift());
       maxDepth=getMaxDepth();
       if(maxDepth*sizeof(FOM_mallocHook::index_t)>maxBuff-sizeof(FOM_mallocHook::header)){
@@ -547,12 +601,17 @@ void* calloc(size_t nobj, size_t size) throw() {
   ret=func(nobj, size);
   clock_gettime(CLOCK_MONOTONIC,&t2);
 
-//  if((nobj*size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
-if(!malloc_tracing_flag_sami.test_and_set()){
+  //  if((nobj*size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
+  if( 
+#ifdef ENABLE_USER_CONTROL
+     captureEnabled &&
+#endif
+     !malloc_tracing_flag_sami.test_and_set()
+      ){
 #ifndef __DO_GNU_BACKTRACE__
-   // long tmp1 = t2.tv_sec - t1.tv_sec;
-   // long tmp2 = t2.tv_nsec - t1.tv_nsec;
-    show_backtrace(0,nobj*size,ret,maxDepth,3, t1, t2);
+    show_backtrace(nobj*size,ret,maxDepth,3, 
+		   t1.tv_sec*1000000000l+t1.tv_nsec, 
+		   t2.tv_sec*1000000000l+t2.tv_nsec,0);
 #else
     show_backtraceGNU(0,nobj*size,ret,maxDepth);
 #endif
@@ -567,16 +626,16 @@ void free (void *ptr){
   static int maxDepth=0;
 
   if (! func){ 
-      func = (void (*) (void*)) dlsym (RTLD_NEXT, "free");
-  sizeLimit=(8ul<<getShift());
+    func = (void (*) (void*)) dlsym (RTLD_NEXT, "free");
+    sizeLimit=(8ul<<getShift());
     maxDepth=getMaxDepth();
     if(!initializedForkHooks.test_and_set()){
       int retVal=pthread_atfork(&prepFork,&postForkParent,&postForkChildren);
       if(retVal!=0){
-        std::cerr<<"forking handler registrations failed. If process is forking, sampling may not work."<<std::endl;
+	std::cerr<<"forking handler registrations failed. If process is forking, sampling may not work."<<std::endl;
       }
     }
-
+      
     if(maxDepth*sizeof(FOM_mallocHook::index_t)>maxBuff-sizeof(FOM_mallocHook::header)){
       int maxAvailDepth=(maxBuff-sizeof(FOM_mallocHook::header))/sizeof(FOM_mallocHook::index_t)-1;
       std::cerr<<"Max stack depth is too high, please recompile with increased maxBuff. Limiting max stack depth to "<<maxAvailDepth<<std::endl;
@@ -587,13 +646,13 @@ void free (void *ptr){
     if(!malloc_tracing_flag_sami.test_and_set()){
       std::atexit(atexit_handler);
       fwriter=getWriter();
-
+      currWriter(fwriter);
       sizeLimit=(8ul<<getShift());
       maxDepth=getMaxDepth();
       if(maxDepth*sizeof(FOM_mallocHook::index_t)>maxBuff-sizeof(FOM_mallocHook::header)){
-        int maxAvailDepth=(maxBuff-sizeof(FOM_mallocHook::header))/sizeof(FOM_mallocHook::index_t)-1;
-        std::cerr<<"Max stack depth is too high, please recompile with increased maxBuff. Limiting max stack depth to "<<maxAvailDepth<<std::endl;
-        maxDepth=maxAvailDepth;
+	int maxAvailDepth=(maxBuff-sizeof(FOM_mallocHook::header))/sizeof(FOM_mallocHook::index_t)-1;
+	std::cerr<<"Max stack depth is too high, please recompile with increased maxBuff. Limiting max stack depth to "<<maxAvailDepth<<std::endl;
+	maxDepth=maxAvailDepth;
       }
       malloc_tracing_flag_sami.clear();
     }else{
@@ -607,13 +666,18 @@ void free (void *ptr){
   clock_gettime(CLOCK_MONOTONIC,&t1);
   func(ptr);
   clock_gettime(CLOCK_MONOTONIC,&t2);
-//if((nobj*size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
+  //if((nobj*size>=sizeLimit) && !malloc_tracing_flag_sami.test_and_set()){
 
-if ( !malloc_tracing_flag_sami.test_and_set()){
+
+  if ( 
+#ifdef ENABLE_USER_CONTROL
+      captureEnabled &&
+#endif
+      !malloc_tracing_flag_sami.test_and_set()){
 #ifndef __DO_GNU_BACKTRACE__
-   // long tmp1 = t2.tv_sec - t1.tv_sec;
-   // long tmp2 = t2.tv_nsec - t1.tv_nsec;
-    show_backtrace(0,0,ptr,maxDepth,0, t1, t2);
+    show_backtrace(0,ptr,maxDepth,0, 
+		   t1.tv_sec*1000000000l+t1.tv_nsec, 
+		   t2.tv_sec*1000000000l+t2.tv_nsec,0);
 #else
     show_backtraceGNU(0,size,ret,maxDepth);
 #endif

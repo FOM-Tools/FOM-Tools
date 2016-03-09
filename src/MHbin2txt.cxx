@@ -125,12 +125,13 @@ int main(int argc,char* argv[]){
   if(lstat(inpName.c_str(),&st)){
     std::cerr<<"Can't stat input file \""<<inpName<<"\". Check that file exists and readeable"<<std::endl;
   }
-  if(st.st_size> (7<<30)){//"file is too big, just use indexer to access it"
-    std::cout<<"File is too big ("<<st.st_size<<" B) using indexer"<<std::endl;
+  if(st.st_size > (7ul<<30)){//"file is too big, just use indexer to access it"
+    std::cout<<"File is too big ("<<st.st_size<<" B) using indexer ( "<<(7ul<<30) <<" )"<<std::endl;
     int rc=clock_gettime(CLOCK_MONOTONIC,&tstart);
     FOM_mallocHook::IndexingReader *r=0;
     try{
       r=new FOM_mallocHook::IndexingReader(inpName);
+      r->getFileStats()->print();
       int rc=clock_gettime(CLOCK_MONOTONIC,&tend);
       long ds=(tend.tv_sec-tstart.tv_sec);
       long dns=(tend.tv_nsec-tstart.tv_nsec);
@@ -140,6 +141,7 @@ int main(int argc,char* argv[]){
       }
       dns=dns/1000000.;
       printf("Scanning file %s took %lu.%03lu seconds\n",inpName.c_str(),ds,dns);
+      
     }catch(std::exception &ex){
       fprintf(stderr,"Caught exception %s\n",ex.what());
       exit(EXIT_FAILURE);
@@ -150,13 +152,10 @@ int main(int argc,char* argv[]){
       auto memRec=r->at(t);
       auto hdr=memRec.getHeader();
       buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,
-			"%ld.%ld %d 0x%lx %ld %ld.%ld",
-			hdr->tsec,
-			(long)(hdr->tnsec),//*msecRes),
+			"%lld %d 0x%lx %ld %lld",
+			hdr->tstart,
 			hdr->allocType,
-			//((hdr->addr)&(~pageMask)),
-			//((hdr->addr+hdr->size)|(pageMask)),
-			hdr->addr, hdr->size, hdr->timediffsec, hdr->timediffnsec);
+			hdr->addr, hdr->size, hdr->treturn);
       int nStacks=0;
       auto stIds=memRec.getStacks(&nStacks);
       for(int i=0;i<nStacks;i++){
@@ -186,6 +185,7 @@ int main(int argc,char* argv[]){
     dns=dns/1000000.;
     printf("Read %ld records and written %lu bytes to %s in %lu.%03lu seconds\n",nrecords,totBytes,outName.c_str(),ds,dns);
   }else{
+    std::cout<<"File is will be buffered in memory ("<<st.st_size<<" B <"<<(7ul<<30) <<" )"<<std::endl;
     int rc=clock_gettime(CLOCK_MONOTONIC,&tstart);
     FOM_mallocHook::Reader *rdr=0;
     try{
@@ -197,16 +197,15 @@ int main(int argc,char* argv[]){
     size_t nRecords=rdr->size();
     printf("Starting conversion\n");
     for(size_t t=0;t<nRecords;t++){
-      auto memRec=rdr->at(t);
+      auto& memRec=rdr->at(t);
       auto hdr=memRec.getHeader();
       buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,
-			"%ld.%ld %d 0x%lx %ld %ld.%ld",
-			hdr->tsec,
-			(long)(hdr->tnsec),//*msecRes),
+			"%lld %d 0x%lx %ld %ld",
+			hdr->tstart,
 			hdr->allocType,
-			//((hdr->addr)&(~pageMask)),
-			//((hdr->addr+hdr->size)|(pageMask)),
-			hdr->addr, hdr->size, hdr->timediffsec, hdr->timediffnsec);
+			hdr->addr,
+			hdr->size,
+			hdr->treturn);
       int nStacks=0;
       auto stIds=memRec.getStacks(&nStacks);
     

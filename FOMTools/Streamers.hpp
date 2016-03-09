@@ -35,13 +35,10 @@
 namespace FOM_mallocHook{
   typedef unsigned int index_t;
   struct header{
-    long tsec;
-    long tnsec;
-    long timediffsec;
-    long timediffnsec;
-    long timediff2sec;
-    long timediff2nsec;
-    char allocType;
+    uint64_t tstart;//time when malloc is called
+    uint64_t treturn;// time when real malloc returns
+    uint64_t tend;// time when record is ready for serialization
+    char allocType;// type of the allocation 0-free 1-malloc 2-realloc 3-calloc
     uintptr_t addr;//returned address
     size_t size; //size of allocation
     int count; // # of stacks in record
@@ -62,10 +59,9 @@ namespace FOM_mallocHook{
     ~MemRecord();
     uintptr_t getFirstPage() const;
     uintptr_t getLastPage() const ;
-    long getTimeSec()const;
-    long getTimeNSec() const;
-    long getTimeDiffSec()const;
-    long getTimeDiffNSec() const;
+    uint64_t getTStart()const;
+    uint64_t getTReturn() const;
+    uint64_t getTEnd()const;
     uintptr_t getAddr() const;
     size_t getSize() const;
     char getAllocType() const;
@@ -89,15 +85,10 @@ namespace FOM_mallocHook{
     ~RecordIndex();
     uintptr_t getFirstPage() const;
     uintptr_t getLastPage() const ;
-    long getTimeSec()const;
-    long getTimeNSec() const;
-    long getT0Sec() const;
-    long getT0NSec() const;
-    long getT1Sec() const;
-    long getT1NSec() const;
-    long getT2Sec() const;
-    long getT2NSec() const;
     uintptr_t getAddr() const;
+    uint64_t getTStart()const;
+    uint64_t getTReturn() const;
+    uint64_t getTEnd()const;
     size_t getSize() const;
     char getAllocType() const;
     const index_t* const getStacks(int *count) const;
@@ -120,14 +111,9 @@ namespace FOM_mallocHook{
     ~FullRecord();
     uintptr_t getFirstPage() const;
     uintptr_t getLastPage() const ;
-    long getTimeSec()const;
-    long getTimeNSec() const;
-    long getT0Sec() const;
-    long getT0NSec() const;
-    long getT1Sec() const;
-    long getT1NSec() const;
-    long getT2Sec() const;
-    long getT2NSec() const;
+    uint64_t getTStart()const;
+    uint64_t getTReturn() const;
+    uint64_t getTEnd()const;
     uintptr_t getAddr() const;
     size_t getSize() const;
     char getAllocType() const;
@@ -277,10 +263,12 @@ namespace FOM_mallocHook{
   
   class Writer{
   public:
-    Writer(std::string fileName);
+    Writer(std::string fileName,int compress,size_t bucketSize);
     Writer() = delete;
     ~Writer();
     bool writeRecord(const MemRecord& r);
+    bool writeRecord(const RecordIndex& r);
+    bool writeRecord(const void* hdr);
     bool closeFile(bool flush=false);
     bool reopenFile(bool seekEnd=true);
   private:
@@ -291,6 +279,10 @@ namespace FOM_mallocHook{
     size_t m_maxDepth;
     int m_fileHandle;
     bool m_fileOpened;
+    char* m_bucket;
+    char* m_cBucket;
+    int m_compress;
+    size_t m_bucketSize;
     FileStats* m_stats;
   };
 
@@ -298,33 +290,50 @@ namespace FOM_mallocHook{
   public:
     FileStats();
     ~FileStats();
-    int getVersion()const;
+    //getters
+    int      getVersion()const;
+    size_t   getNumRecords()const;
+    size_t   getMaxStackLen() const;
+    std::vector<std::string> getCmdLine()const;
+    uint64_t getStartTime() const;
+    uint64_t getStartUTC() const;//in ns from utc 0
+    uint32_t getPid()const;
+    int      getCompression()const;
+    size_t   getBucketSize()const;
+    size_t   getNumBuckets()const;
+
+    //setters
     void setVersion(int);
-    size_t getNumRecords()const;
     void setNumRecords(size_t);
-    size_t getMaxStackLen() const;
     void setStackDepthLimit(size_t);
     void setCmdLine(char*,size_t);
-    std::vector<std::string> getCmdLine()const;
-    time_t getStartTime() const;
-    void setStartTime(time_t t);
+    void setStartTime(uint64_t t);
+    void setStartTimeUTC(uint64_t t);
     void setPid(uint32_t);
-    uint32_t getPid()const;
+    void setCompression(int Comp);
+    void setBucketSize(size_t bsize);
+    void setNumBuckets(size_t bsize);
+
     int read(int fd,bool keepOffset=true);
     int write(int fd,bool keepOffset=true)const;
     int read(std::istream &in);
-    int write(std::ostream &out);
+    int write(std::ostream &out)const;
+    std::ostream& print(std::ostream &out=std::cout)const;
   private:
     friend class FOM_mallocHook::Writer;
     struct fileHdr{
       char key[4]; //HEADER MARKER
       int ToolVersion; //Version used to generate
-      size_t numRecords; //Number of records in file
-      size_t maxStacks; //Max number of stacks 
-      uint32_t pid;
-      time_t startTime;
-      size_t cmdLength;
-      char* cmdLine;
+      int Compression;// 0 -no compression 10000x zlib
+      size_t NumRecords; //Number of records in file
+      size_t MaxStacks; //Max number of stacks 
+      size_t BucketSize;// Size of compressed buffer, 0 otherwise
+      size_t NumBuckets;// Number of buckets in file
+      uint32_t Pid;//PID of process
+      uint64_t StartTime;// Start time of process in machine time
+      uint64_t StartTimeUtc;// Start time of process in UTC
+      size_t CmdLength; //length of command-line
+      char* CmdLine;// commandline string
     } *m_hdr;
   };
 

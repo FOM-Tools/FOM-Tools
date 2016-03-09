@@ -31,6 +31,7 @@
 #include <exception>
 #include <stdexcept>
 #include <sys/time.h>
+#include <chrono> //to get utc
 
 #define handle_error(msg)				\
   do { perror(msg); exit(EXIT_FAILURE); } while (0)
@@ -66,12 +67,9 @@ static int timespec_sub (struct timespec *diff, long xsec, long xnsec, long ysec
 
 
 FOM_mallocHook::MemRecord::MemRecord(void* r){
-  m_h.tsec=0;
-  m_h.tnsec=0;
-  m_h.timediffsec=0;
-  m_h.timediffnsec=0;
-  m_h.timediff2sec=0;
-  m_h.timediff2nsec=0;
+  m_h.tstart=0;
+  m_h.treturn=0;
+  m_h.tend=0;
   m_h.allocType=0;
   m_h.addr=0;
   m_h.size=0;
@@ -107,20 +105,19 @@ uintptr_t FOM_mallocHook::MemRecord::getFirstPage()const {
 uintptr_t FOM_mallocHook::MemRecord::getLastPage()const {
   return (m_h.addr+m_h.size)|pageMask;
 }
-long FOM_mallocHook::MemRecord::getTimeSec()const{
-  return m_h.tsec;
+
+uint64_t FOM_mallocHook::MemRecord::getTStart()const{
+  return m_h.tstart;
 }
 
-long FOM_mallocHook::MemRecord::getTimeNSec() const{
-  return m_h.tnsec;
-}
-long FOM_mallocHook::MemRecord::getTimeDiffSec()const{
-  return m_h.timediffsec;
+uint64_t FOM_mallocHook::MemRecord::getTReturn()const{
+  return m_h.treturn;
 }
 
-long FOM_mallocHook::MemRecord::getTimeDiffNSec() const{
-  return m_h.timediffnsec;
+uint64_t FOM_mallocHook::MemRecord::getTEnd()const{
+  return m_h.tend;
 }
+
 
 char FOM_mallocHook::MemRecord::getAllocType() const{
   return m_h.allocType; 
@@ -171,8 +168,8 @@ FOM_mallocHook::Reader::Reader(std::string fileName):m_fileHandle(-1),
   m_fileStats=new FOM_mallocHook::FileStats();
   //std::cout << m_fileStats << " " << m_fileHandle << std::endl;
   m_fileStats->read(m_fileHandle,false);
-  off_t hdrOff=::lseek(m_fileHandle,0,SEEK_CUR);
-  ::lseek(m_fileHandle,0,SEEK_SET);
+  off_t hdrOff=::lseek64(m_fileHandle,0,SEEK_CUR);
+  ::lseek64(m_fileHandle,0,SEEK_SET);
   m_fileBegin=mmap64(0,sinp.st_size,PROT_READ,MAP_PRIVATE,inpFile,0);
   if(m_fileBegin==MAP_FAILED){
     throw std::ios_base::failure(std::string(strerror_r(errno,buff,2048))+"failed to mmap "+m_fileName);        
@@ -182,81 +179,14 @@ FOM_mallocHook::Reader::Reader(std::string fileName):m_fileHandle(-1),
 
   void* fileEnd=(char*)m_fileBegin+sinp.st_size;
   FOM_mallocHook::header *h=(FOM_mallocHook::header*)(((uintptr_t)m_fileBegin)+hdrOff);
-  std::string outName=fileName+".txt";
-int outFile=open(outName.c_str(),O_WRONLY|O_CREAT|O_TRUNC,(S_IRWXU^S_IXUSR)|(S_IRWXG^S_IXGRP)|S_IROTH);
-  ssize_t buffPos=0;
-  size_t maxBuf=16<<10;
-  char buff2[16<<10];
-  
-  struct timespec overhead;
-  long overhead_sec = 0.0; 
-  long overhead_nsec = 0.0;
   while ((void*)h<fileEnd){
-     
-     MemRecord mr(h);
-     const auto hdr=mr.getHeader();
-     struct timespec diff;
-     timespec_sub(&diff, hdr->timediff2sec, hdr->timediff2nsec, hdr->timediffsec, hdr->timediffnsec);    
-     timespec_add(&overhead, &diff);
-     buffPos+=snprintf(buff2+buffPos,maxBuf-buffPos,
-                "%ld%09ld %d %lu %d %ld%09ld %ld%09ld \"",
-                hdr->tsec,
-                hdr->tnsec,//*msecRes),
-                hdr->allocType,
-                hdr->addr, hdr->size, hdr->timediffsec, hdr->timediffnsec, overhead_sec, overhead_nsec);
-    overhead_sec = overhead.tv_sec;
-    overhead_nsec = overhead.tv_nsec;
-    int nStacks=0;
-    auto stIds=mr.getStacks(&nStacks);
-   // std::cout << nStacks << std::endl;
-     for(int i=0;i< nStacks;i++){
-        buffPos+=snprintf(buff2+buffPos,maxBuf-buffPos," %u",*(stIds+i));}
-    buffPos+=snprintf(buff2+buffPos,maxBuf-buffPos,"\"\n");
-    write(outFile,buff2,buffPos);
-    h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count);
-    buffPos=0;
-    }
-    
- 
-    //catch(std::exception &ex){
-    //std::cout<< h <<std::endl;}
-    
-
-
-  /*m_records.reserve(2357945446);//m_fileStats->getNumRecords());
-  std::cout << "....." <<std::endl;
-  void* fileEnd=(char*)m_fileBegin+sinp.st_size;
-  FOM_mallocHook::header *h=(FOM_mallocHook::header*)(((uintptr_t)m_fileBegin)+hdrOff);
-  while ((void*)h<fileEnd){
-     try{ 
-     MemRecord mr(h);
-   /*  const auto hdr=mr.getHeader();
-     std::cout<<"tsec= "<<hdr->tsec<<
-       " tnsec= "<<hdr->tnsec<<
-       " addr= "<<hdr->addr<<
-       " size= "<<hdr->size<<
-       " count= "<<hdr->count;*/
-  //  std::cout << "test3" << std::endl;
-   /* m_records.emplace_back((void*)h);
-    h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count);}
-    catch(std::exception &ex){
-    std::cout<< h <<std::endl;
-    h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count);
-    std::cout << h << std::endl;
-    
     m_records.emplace_back((void*)h);
-    MemRecord mr(h);
-    const auto hdr=mr.getHeader();
-     std::cout<<"tsec= "<<hdr->tsec<<
-       " tnsec= "<<hdr->tnsec<<
-       " addr= "<<hdr->addr<<
-       " size= "<<hdr->size<<
-       " count= "<<hdr->count << " " << h->count;
-    break;
-     }
+    const auto hdr=m_records.back().getHeader();
+    h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count);
   }
-  std::cout<<"Found "<<m_records.size()<<" records"<<std::endl;*/
+  std::cout<<"Found "<<m_records.size()<<" records"<<std::endl;
 }
+
 const FOM_mallocHook::FileStats* FOM_mallocHook::Reader::getFileStats()const{
   return m_fileStats;
 }
@@ -270,14 +200,25 @@ FOM_mallocHook::Reader::~Reader(){
 }
 
 const FOM_mallocHook::MemRecord& FOM_mallocHook::Reader::at(size_t t){return m_records.at(t);}
+
 size_t FOM_mallocHook::Reader::size(){return m_records.size();}
 
 /* WRITER CLASS
  */
 
-FOM_mallocHook::Writer::Writer(std::string fileName):m_fileName(fileName),m_fileHandle(-1),m_fileOpened(false),m_stats(0){
+FOM_mallocHook::Writer::Writer(std::string fileName,int comp,size_t bsize):m_fileName(fileName),
+									   m_nRecords(0),
+									   m_maxDepth(0),
+									   m_fileHandle(-1),
+									   m_fileOpened(false),
+									   m_bucket(0),
+									   m_cBucket(0),
+									   m_compress(comp),
+									   m_bucketSize(bsize),
+									   m_stats(0){
   if(m_fileName.empty())throw std::ios_base::failure("File name is empty");
   int outFile=open(m_fileName.c_str(),O_WRONLY|O_CREAT|O_TRUNC,(S_IRWXU^S_IXUSR)|(S_IRWXG^S_IXGRP)|(S_IROTH));
+  //std::cerr<<__PRETTY_FUNCTION__<<m_fileName<<" @fd="<<outFile<<" pid= "<<getpid()<<std::endl;
   if(outFile==-1){
     std::cerr<<"Can't open out file \""<<m_fileName<<"\""<<std::endl;
     char buff[2048];
@@ -285,16 +226,20 @@ FOM_mallocHook::Writer::Writer(std::string fileName):m_fileName(fileName),m_file
   }
   m_fileHandle=outFile;
   m_stats=new FileStats();
-  m_stats->setVersion(1);
+  m_stats->setVersion(20000);
   m_stats->setPid(getpid());
-  m_stats->setStartTime(getProcessStartTime());
+  struct timespec tp;
+  int rc=clock_gettime(CLOCK_MONOTONIC,&tp);
+  m_stats->setStartTime(tp.tv_sec*1000000000l+tp.tv_nsec);
+  m_stats->setStartTimeUTC(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   size_t len=2048;
   char *buff=new char[len];
   if(!parseCmdline(buff,&len)){
     throw std::ios_base::failure(std::string("Parsing process commandline failed! ")+
 				 std::string(strerror_r(errno,buff,2048)));
   }
-  
+  m_stats->setCompression(comp);
+  m_stats->setBucketSize(bsize);
   m_stats->setCmdLine(buff,len);
   //for(auto &cl:m_stats->getCmdLine()){std::cerr<<cl<<" ";}std::cerr<<std::endl;
   m_stats->write(m_fileHandle,false);
@@ -307,6 +252,7 @@ FOM_mallocHook::Writer::Writer(std::string fileName):m_fileName(fileName),m_file
 
 bool FOM_mallocHook::Writer::closeFile(bool flush){
   if(m_fileOpened){
+    //std::cerr<<__PRETTY_FUNCTION__<<fsync(m_fileHandle)<<" "<<m_fileName<<" @fd= "<<m_fileHandle<<" currOffset="<<::lseek64(m_fileHandle,0,SEEK_CUR)<<" pid= "<<getpid()<<std::endl;    
     if(flush){
       if(m_stats){
 	//std::cerr<<"Nrecords= "<<m_nRecords<<" max depth="<<m_maxDepth<<std::endl;
@@ -314,9 +260,11 @@ bool FOM_mallocHook::Writer::closeFile(bool flush){
 	m_stats->setStackDepthLimit(m_maxDepth);
 	m_stats->write(m_fileHandle,false);
       }
-      fsync(m_fileHandle);
     }
+    fsync(m_fileHandle);
+    //std::cerr<<__PRETTY_FUNCTION__<<fsync(m_fileHandle)<<" "<<m_fileName<<" @fd= "<<m_fileHandle<<" pid= "<<getpid()<<std::endl;
     close(m_fileHandle);
+    //std::cerr<<__PRETTY_FUNCTION__<<close(m_fileHandle)<<" "<<m_fileName<<" @fd= "<<m_fileHandle<<" pid= "<<getpid()<<std::endl;
     delete m_stats;
     m_stats=0;
     m_fileOpened=false;
@@ -331,16 +279,27 @@ bool FOM_mallocHook::Writer::reopenFile(bool seekEnd){
     return false;
   }
   if(m_fileName.empty())throw std::ios_base::failure("File name is empty");
-  int outFile=open(m_fileName.c_str(),O_WRONLY,(S_IRWXU^S_IXUSR)|(S_IRWXG^S_IXGRP)|(S_IROTH));
+  int outFile=open(m_fileName.c_str(),O_RDONLY,(S_IRWXU^S_IXUSR)|(S_IRWXG^S_IXGRP)|(S_IROTH));
+    if(outFile==-1){
+    std::cerr<<"Can't open out file \""<<m_fileName<<"\""<<std::endl;
+    char buff[2048];
+    throw std::ios_base::failure(std::string("Openning file failed ")+std::string(strerror_r(errno,buff,2048)));
+  }
+  m_stats=new FOM_mallocHook::FileStats();
+  m_stats->read(outFile,false);
+  fsync(outFile);
+  close(outFile);
+  outFile=open(m_fileName.c_str(),O_WRONLY,(S_IRWXU^S_IXUSR)|(S_IRWXG^S_IXGRP)|(S_IROTH));
   if(outFile==-1){
     std::cerr<<"Can't open out file \""<<m_fileName<<"\""<<std::endl;
     char buff[2048];
-    throw std::ios_base::failure(std::string(strerror_r(errno,buff,2048)));
+    throw std::ios_base::failure(std::string("Openning file failed ")+std::string(strerror_r(errno,buff,2048)));
   }
+  fsync(outFile);
   m_fileHandle=outFile;
   m_fileOpened=true;
   if(seekEnd){
-    ::lseek(outFile,0,SEEK_END);
+    ::lseek64(outFile,0,SEEK_END);
   }
   return true;
 }
@@ -348,9 +307,10 @@ bool FOM_mallocHook::Writer::reopenFile(bool seekEnd){
 FOM_mallocHook::Writer::~Writer(){
   if(m_fileOpened){
     if(m_stats){
-      //std::cerr<<"Nrecords= "<<m_nRecords<<" max depth="<<m_maxDepth<<std::endl;
+      //std::cerr<<__PRETTY_FUNCTION__<<" Nrecords= "<<m_nRecords<<" max depth="<<m_maxDepth<<" @pid="<<getpid()<<std::endl;
       m_stats->setNumRecords(m_nRecords);
       m_stats->setStackDepthLimit(m_maxDepth);
+      //m_stats->print();
       m_stats->write(m_fileHandle,false);
     }
     fsync(m_fileHandle);
@@ -368,7 +328,7 @@ bool FOM_mallocHook::Writer::parseCmdline(char* b,size_t *len){
   ssize_t cmdLen=::read(cmdHandle,b,*len);
   if(cmdLen<0){
     close(cmdHandle);
-    throw std::ios_base::failure(std::string(strerror_r(errno,buff,200)));
+    throw std::ios_base::failure(std::string(" parse commandline failed ")+std::string(strerror_r(errno,buff,200)));
   }else if(cmdLen==0){
     close(cmdHandle);
     return false;
@@ -425,22 +385,47 @@ bool FOM_mallocHook::Writer::writeRecord(const MemRecord&r){
   auto stIds=r.getStacks(&nStacks);
   m_nRecords++;
   if(m_maxDepth<nStacks)m_maxDepth=nStacks;
-  // std::cout<<"tsec= "<<hdr->tsec<<
-  //   " tnsec= "<<hdr->tnsec<<
-  //   " addr= "<<hdr->addr<<
-  //   " size= "<<hdr->size<<
-  //   " count= "<<hdr->count;
-  // for(int i=0;i<nStacks;i++){
-  //   std::cout<<" "<<stIds[i];
-  // }
-  // std::cout<<std::endl;
   if(write(m_fileHandle,hdr,sizeof(*hdr))!=sizeof(*hdr)){
     char buff[2048];
-    throw std::ios_base::failure(std::string(strerror_r(errno,buff,2048)));
+    throw std::ios_base::failure(std::string(" WriteRecord1 ")+std::string(strerror_r(errno,buff,2048)));
   }
   if(write(m_fileHandle,stIds,sizeof(*stIds)*nStacks)!=sizeof(*stIds)*nStacks){
     char buff[2048];
-    throw std::ios_base::failure(std::string(strerror_r(errno,buff,2048)));
+    throw std::ios_base::failure(std::string(" WriteRecord1 ")+std::string(strerror_r(errno,buff,2048)));
+  }
+  return true;
+}
+
+bool FOM_mallocHook::Writer::writeRecord(const RecordIndex&r){
+  const auto  hdr=r.getHeader();
+  int nStacks=0;
+  auto stIds=r.getStacks(&nStacks);
+  m_nRecords++;
+  if(m_maxDepth<nStacks)m_maxDepth=nStacks;
+  if(write(m_fileHandle,hdr,sizeof(*hdr))!=sizeof(*hdr)){
+    char buff[2048];
+    throw std::ios_base::failure(std::string(" WriteRecord2 ")+std::string(strerror_r(errno,buff,2048)));
+  }
+  if(write(m_fileHandle,stIds,sizeof(*stIds)*nStacks)!=sizeof(*stIds)*nStacks){
+    char buff[2048];
+    throw std::ios_base::failure(std::string(" WriteRecord2 ")+std::string(strerror_r(errno,buff,2048)));
+  }
+  return true;
+}
+
+bool FOM_mallocHook::Writer::writeRecord(const void *r){
+  const auto  hdr=(FOM_mallocHook::header*)r;
+  int nStacks=hdr->count;
+  auto stIds=((FOM_mallocHook::index_t*)(hdr+1));
+  m_nRecords++;
+  if(m_maxDepth<nStacks)m_maxDepth=nStacks;
+  if(write(m_fileHandle,hdr,sizeof(*hdr))!=sizeof(*hdr)){
+    char buff[2048];
+    throw std::ios_base::failure(std::string(" WriteRecord3 ")+std::string(strerror_r(errno,buff,2048)));
+  }
+  if(write(m_fileHandle,stIds,sizeof(*stIds)*nStacks)!=sizeof(*stIds)*nStacks){
+    char buff[2048];
+    throw std::ios_base::failure(std::string(" WriteRecord3 ")+std::string(strerror_r(errno,buff,2048)));
   }
   return true;
 }
@@ -449,15 +434,19 @@ FOM_mallocHook::FileStats::FileStats(){
   m_hdr=new FileStats::fileHdr();
   strncpy(m_hdr->key,"FOM",4);
   m_hdr->ToolVersion=-1;
-  m_hdr->numRecords=0;
-  m_hdr->maxStacks=0;
-  m_hdr->pid=0;
-  m_hdr->cmdLength=0;
-  m_hdr->cmdLine=0;
+  m_hdr->Compression=0;  
+  m_hdr->NumRecords=0;
+  m_hdr->MaxStacks=0;
+  m_hdr->BucketSize=0;
+  m_hdr->NumBuckets=0;
+  m_hdr->Pid=0;
+  m_hdr->CmdLength=0;
+  m_hdr->CmdLine=0;
+  
 }
 
 FOM_mallocHook::FileStats::~FileStats(){
-  delete[] m_hdr->cmdLine;
+  delete[] m_hdr->CmdLine;
   delete m_hdr;
 }
 
@@ -466,22 +455,19 @@ int FOM_mallocHook::FileStats::getVersion()const{
 }
 
 size_t FOM_mallocHook::FileStats::getNumRecords()const{
-  return m_hdr->numRecords;
+  return m_hdr->NumRecords;
 }
 
 size_t FOM_mallocHook::FileStats::getMaxStackLen()const{
-  return m_hdr->maxStacks;
+  return m_hdr->MaxStacks;
 }
 
-uint32_t FOM_mallocHook::FileStats::getPid()const{
-  return m_hdr->pid;
-}
 
 std::vector<std::string> FOM_mallocHook::FileStats::getCmdLine()const{
   std::vector<std::string> cmds;
-  if(m_hdr->cmdLength){
-    char* c=m_hdr->cmdLine;
-    char *cmdEnd=m_hdr->cmdLine+m_hdr->cmdLength;
+  if(m_hdr->CmdLength){
+    char* c=m_hdr->CmdLine;
+    char *cmdEnd=m_hdr->CmdLine+m_hdr->CmdLength;
     while(c<cmdEnd){
       std::string s(c);
       c+=s.length()+1;
@@ -491,116 +477,192 @@ std::vector<std::string> FOM_mallocHook::FileStats::getCmdLine()const{
   return cmds;
 }
 
-time_t FOM_mallocHook::FileStats::getStartTime()const{
-  return m_hdr->startTime;
+uint64_t FOM_mallocHook::FileStats::getStartTime()const{
+  return m_hdr->StartTime;
 }
+uint64_t FOM_mallocHook::FileStats::getStartUTC()const{
+  return m_hdr->StartTimeUtc;
+}
+
+uint32_t FOM_mallocHook::FileStats::getPid()const{
+  return m_hdr->Pid;
+}
+
+int FOM_mallocHook::FileStats::getCompression()const{
+  return m_hdr->Compression;
+}
+
+size_t   FOM_mallocHook::FileStats::getBucketSize()const{
+  return m_hdr->BucketSize;
+}
+size_t   FOM_mallocHook::FileStats::getNumBuckets()const{
+  return m_hdr->NumBuckets;
+}
+
 
 void FOM_mallocHook::FileStats::setVersion(int ver){
   m_hdr->ToolVersion=ver;
 }
 
 void FOM_mallocHook::FileStats::setNumRecords(size_t n){
-  m_hdr->numRecords=n;
+  m_hdr->NumRecords=n;
 }
 
 void FOM_mallocHook::FileStats::setStackDepthLimit(size_t l){
-  m_hdr->maxStacks=l;
+  m_hdr->MaxStacks=l;
+}
+
+
+void FOM_mallocHook::FileStats::setCmdLine(char* cmd,size_t len){
+  delete m_hdr->CmdLine;
+  m_hdr->CmdLength=len;
+  if(len){
+    m_hdr->CmdLine=new char[len+1];
+    ::memcpy(m_hdr->CmdLine,cmd,len);
+    m_hdr->CmdLine[len]='\0';
+  }else{
+    m_hdr->CmdLine=0; 
+  }
+}
+
+void FOM_mallocHook::FileStats::setStartTime(uint64_t t){
+  m_hdr->StartTime=t;
+}
+
+void FOM_mallocHook::FileStats::setStartTimeUTC(uint64_t t){
+  m_hdr->StartTimeUtc=t;
 }
 
 void FOM_mallocHook::FileStats::setPid(uint32_t p){
-  m_hdr->pid=p;
+  m_hdr->Pid=p;
 }
 
-void FOM_mallocHook::FileStats::setCmdLine(char* cmd,size_t len){
-  delete m_hdr->cmdLine;
-  m_hdr->cmdLength=len;
-  if(len){
-    m_hdr->cmdLine=new char[len+1];
-    ::memcpy(m_hdr->cmdLine,cmd,len);
-    m_hdr->cmdLine[len]='\0';
-  }else{
-    m_hdr->cmdLine=0; 
-  }
+void FOM_mallocHook::FileStats::setCompression(int comp){
+  m_hdr->Compression=comp;
 }
 
-void FOM_mallocHook::FileStats::setStartTime(time_t t){
-  m_hdr->startTime=t;
+void FOM_mallocHook::FileStats::setBucketSize(size_t n){
+  m_hdr->BucketSize=n;
+}
+
+void FOM_mallocHook::FileStats::setNumBuckets(size_t n){
+  m_hdr->NumBuckets=n;
 }
 
 int FOM_mallocHook::FileStats::read(int fd,bool keepOffset){
+#define READS(X) if(::read(fd, (X) , sizeof(X))<0){char buff[2048];	\
+  throw std::ios_base::failure(std::string("Parsing header failed ")+	\
+			       std::string(strerror_r(errno,buff,2048)));} \
+  //std::cerr<<"Read "<<#X<<" = "<<X<<" sizeof="<<sizeof(X)<<" pid="<<getpid()<<" fd="<<fd<<" offs="<<::lseek64(fd,0,SEEK_CUR)<<std::endl;
+#define READ(X) if(::read(fd, &(X) , sizeof(X))<0){char buff[2048];	\
+  throw std::ios_base::failure(std::string("Parsing header failed ")+	\
+			       std::string(strerror_r(errno,buff,2048)));} \
+  //std::cerr<<"Read "<<#X<<" = "<<X<<" sizeof="<<sizeof(X)<<" pid="<<getpid()<<" fd="<<fd<<" offs="<<::lseek64(fd,0,SEEK_CUR)<<std::endl;
   if(fd<0){
     throw std::ios_base::failure("Invalid file descriptor in read()");
   }
-  auto currPos=::lseek(fd,0,SEEK_CUR);
+  auto currPos=::lseek64(fd,0,SEEK_CUR);
   if(currPos==-1){
     char buff[2048];
-    throw std::ios_base::failure(std::string("Finding file offset failed")+
+    throw std::ios_base::failure(std::string("Finding file offset failed ")+
 				 std::string(strerror_r(errno,buff,2048)));
   }
-  if(::lseek(fd,0,SEEK_SET)==-1){
+  auto fBegin=::lseek64(fd,0,SEEK_SET);
+  if(fBegin==-1){
     char buff[2048];
-    throw std::ios_base::failure(std::string("File seek failed")+
+    throw std::ios_base::failure(std::string("File seek failed ")+
 				 std::string(strerror_r(errno,buff,2048)));
   }
-
-  if(::read(fd,m_hdr->key,sizeof(m_hdr->key))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Parsing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-  // std::cout<<"Key="<<m_hdr->key<<sizeof(m_hdr->key)<<std::endl;
-  if(::read(fd,&(m_hdr->ToolVersion),sizeof(m_hdr->ToolVersion))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Parsing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-    // std::cout<<"ToolVersion="<<m_hdr->ToolVersion<<" "<<sizeof(m_hdr->ToolVersion)<<std::endl;
-  if(::read(fd,&(m_hdr->numRecords),sizeof(m_hdr->numRecords))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Parsing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-  // std::cout<<"numRecords="<<m_hdr->numRecords<<" "<<sizeof(m_hdr->numRecords)<<std::endl;  
-  if(::read(fd,&(m_hdr->maxStacks),sizeof(m_hdr->maxStacks))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Parsing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-  // std::cout<<"maxStacks="<<m_hdr->maxStacks<<" "<<sizeof(m_hdr->maxStacks)<<std::endl;
-  if(::read(fd,&(m_hdr->pid),sizeof(m_hdr->pid))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Parsing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-  // std::cout<<"pid="<<m_hdr->pid<<" "<<sizeof(m_hdr->pid)<<std::endl;
-  if(::read(fd,&(m_hdr->startTime),sizeof(m_hdr->startTime))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Parsing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-  // std::cout<<"Start time="<<m_hdr->startTime<<" "<<sizeof(m_hdr->startTime)<<std::endl;
-  if(::read(fd,&(m_hdr->cmdLength),sizeof(m_hdr->cmdLength))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Parsing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-  // std::cerr<<"Cmdlength="<<m_hdr->cmdLength<<" "<<sizeof(m_hdr->cmdLength)<<std::endl;
-  //std::cerr<<"cmdLength="<<m_hdr->cmdLength<<std::endl;
-  delete[] m_hdr->cmdLine;
-  m_hdr->cmdLine=0;
-  if(m_hdr->cmdLength){
-    m_hdr->cmdLine=new char[m_hdr->cmdLength+1];
-    if(::read(fd,m_hdr->cmdLine,m_hdr->cmdLength)<0){
+  
+  // if(::read(fd,m_hdr->key,sizeof(m_hdr->key))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Parsing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // // std::cout<<"Key="<<m_hdr->key<<sizeof(m_hdr->key)<<std::endl;
+  // if(::read(fd,&(m_hdr->ToolVersion),sizeof(m_hdr->ToolVersion))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Parsing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // if(::read(fd,&(m_hdr->Compression),sizeof(m_hdr->Compression))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Parsing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  //   // std::cout<<"ToolVersion="<<m_hdr->ToolVersion<<" "<<sizeof(m_hdr->ToolVersion)<<std::endl;
+  // if(::read(fd,&(m_hdr->NumRecords),sizeof(m_hdr->NumRecords))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Parsing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // // std::cout<<"numRecords="<<m_hdr->numRecords<<" "<<sizeof(m_hdr->numRecords)<<std::endl;  
+  // if(::read(fd,&(m_hdr->MaxStacks),sizeof(m_hdr->MaxStacks))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Parsing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // if(::read(fd,&(m_hdr->BucketSize),sizeof(m_hdr->BucketSize))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Parsing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // if(::read(fd,&(m_hdr->NumBuckets),sizeof(m_hdr->NumBuckets))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Parsing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // // std::cout<<"maxStacks="<<m_hdr->maxStacks<<" "<<sizeof(m_hdr->maxStacks)<<std::endl;
+  // if(::read(fd,&(m_hdr->Pid),sizeof(m_hdr->Pid))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Parsing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // // std::cout<<"pid="<<m_hdr->pid<<" "<<sizeof(m_hdr->pid)<<std::endl;
+  // if(::read(fd,&(m_hdr->StartTime),sizeof(m_hdr->StartTime))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Parsing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // if(::read(fd,&(m_hdr->StartTimeUtc),sizeof(m_hdr->StartTimeUtc))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Parsing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // // std::cout<<"Start time="<<m_hdr->startTime<<" "<<sizeof(m_hdr->startTime)<<std::endl;
+  // if(::read(fd,&(m_hdr->CmdLength),sizeof(m_hdr->CmdLength))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Parsing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // // std::cerr<<"Cmdlength="<<m_hdr->cmdLength<<" "<<sizeof(m_hdr->cmdLength)<<std::endl;
+  // //std::cerr<<"cmdLength="<<m_hdr->cmdLength<<std::endl;
+  READS(m_hdr->key);
+  READ(m_hdr->ToolVersion);
+  READ(m_hdr->Compression);
+  READ(m_hdr->NumRecords);
+  READ(m_hdr->MaxStacks);
+  READ(m_hdr->BucketSize);
+  READ(m_hdr->NumBuckets);
+  READ(m_hdr->Pid);
+  READ(m_hdr->StartTime);
+  READ(m_hdr->StartTimeUtc);
+  READ(m_hdr->CmdLength);
+  delete[] m_hdr->CmdLine;
+  m_hdr->CmdLine=0;
+  if(m_hdr->CmdLength){
+    m_hdr->CmdLine=new char[m_hdr->CmdLength+1];
+    if(::read(fd,m_hdr->CmdLine,m_hdr->CmdLength)<0){
       char buff[2048];
-      throw std::ios_base::failure(std::string("Parsing header failed")+
+      throw std::ios_base::failure(std::string("Parsing header failed ")+
 				   std::string(strerror_r(errno,buff,2048)));
     }
     // std::cout<<"cmdLine="<<m_hdr->cmdLine<<std::endl;
   }
   if(keepOffset){
-    if(::lseek(fd,currPos,SEEK_SET)==-1){
+    if(::lseek64(fd,currPos,SEEK_SET)==-1){
       char buff[2048];
-      throw std::ios_base::failure(std::string("Seek failed")+
+      throw std::ios_base::failure(std::string("Seek failed ")+
 				   std::string(strerror_r(errno,buff,2048)));
     }
     // std::cout<<"File Offset "<<currPos<<std::endl;
@@ -609,76 +671,116 @@ int FOM_mallocHook::FileStats::read(int fd,bool keepOffset){
 }
 
 int FOM_mallocHook::FileStats::write(int fd,bool keepOffset)const{
+#define WRITES(X) if(::write(fd,X,sizeof(X))!=sizeof(X)){char buff[2048]; \
+  throw std::ios_base::failure(std::string("Writing header failed with ")+	\
+			       std::string(strerror_r(errno,buff,2048)));} \
+  //std::cerr<<"Write "<<#X<<" = "<<X<<" sizeof="<<sizeof(X)<<" pid="<<getpid()<<" fd="<<fd<<" offs="<<::lseek64(fd,0,SEEK_CUR)<<std::endl;
+#define WRITE(X) if(::write(fd,&(X),sizeof(X))!=sizeof(X)){char buff[2048]; \
+  throw std::ios_base::failure(std::string("Writing header failed with ")+	\
+			       std::string(strerror_r(errno,buff,2048)));} \
+  //std::cerr<<"Write "<<#X<<" = "<<X<<" sizeof="<<sizeof(X)<<" pid="<<getpid()<<" fd="<<fd<<" offs="<<::lseek64(fd,0,SEEK_CUR)<<std::endl;
 
   if(fd<0){
     throw std::ios_base::failure("Invalid file descriptor in write()");
   }
-  auto currPos=::lseek(fd,0,SEEK_CUR);
+  auto currPos=::lseek64(fd,0,SEEK_CUR);
   if(currPos==-1){
     char buff[2048];
-    throw std::ios_base::failure(std::string("Finding file offset failed")+
+    throw std::ios_base::failure(std::string("Finding file offset failed ")+
 				 std::string(strerror_r(errno,buff,2048)));
   }
   // std::cout<<"File Offset "<<currPos<<std::endl;
-  if(::lseek(fd,0,SEEK_SET)==-1){
+  if(::lseek64(fd,0,SEEK_SET)==-1){
     char buff[2048];
-    throw std::ios_base::failure(std::string("File seek failed")+
+    throw std::ios_base::failure(std::string("File seek failed ")+
 				 std::string(strerror_r(errno,buff,2048)));
   }
-  if(::write(fd,m_hdr->key,sizeof(m_hdr->key))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Writing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-  // std::cout<<"Key="<<m_hdr->key<<sizeof(m_hdr->key)<<std::endl;
-  if(::write(fd,&(m_hdr->ToolVersion),sizeof(m_hdr->ToolVersion))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Writing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-  // std::cout<<"ToolVersion="<<m_hdr->ToolVersion<<" "<<sizeof(m_hdr->ToolVersion)<<std::endl;
-  if(::write(fd,&(m_hdr->numRecords),sizeof(m_hdr->numRecords))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Writing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-  // std::cout<<"numRecords="<<m_hdr->numRecords<<" "<<sizeof(m_hdr->numRecords)<<std::endl;  
-  if(::write(fd,&(m_hdr->maxStacks),sizeof(m_hdr->maxStacks))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Writing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-  // std::cout<<"maxStacks="<<m_hdr->maxStacks<<" "<<sizeof(m_hdr->maxStacks)<<std::endl;
-  if(::write(fd,&(m_hdr->pid),sizeof(m_hdr->pid))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Writing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-  // std::cout<<"pid="<<m_hdr->pid<<" "<<sizeof(m_hdr->pid)<<std::endl;
-  if(::write(fd,&(m_hdr->startTime),sizeof(m_hdr->startTime))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Writing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
-  // std::cout<<"Start time="<<m_hdr->startTime<<" "<<sizeof(m_hdr->startTime)<<std::endl;
-  if(::write(fd,&(m_hdr->cmdLength),sizeof(m_hdr->cmdLength))<0){
-    char buff[2048];
-    throw std::ios_base::failure(std::string("Writing header failed")+
-				 std::string(strerror_r(errno,buff,2048)));
-  }
+  // if(::write(fd,m_hdr->key,sizeof(m_hdr->key))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Writing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // // std::cout<<"Key="<<m_hdr->key<<sizeof(m_hdr->key)<<std::endl;
+  // if(::write(fd,&(m_hdr->ToolVersion),sizeof(m_hdr->ToolVersion))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Writing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // // std::cout<<"ToolVersion="<<m_hdr->ToolVersion<<" "<<sizeof(m_hdr->ToolVersion)<<std::endl;
+  // if(::write(fd,&(m_hdr->Compression),sizeof(m_hdr->Compression))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Writing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // if(::write(fd,&(m_hdr->NumRecords),sizeof(m_hdr->NumRecords))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Writing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // // std::cout<<"numRecords="<<m_hdr->numRecords<<" "<<sizeof(m_hdr->numRecords)<<std::endl;  
+  // if(::write(fd,&(m_hdr->MaxStacks),sizeof(m_hdr->MaxStacks))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Writing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // if(::write(fd,&(m_hdr->BucketSize),sizeof(m_hdr->BucketSize))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Writing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // if(::write(fd,&(m_hdr->NumBuckets),sizeof(m_hdr->NumBuckets))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Writing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // // std::cout<<"maxStacks="<<m_hdr->maxStacks<<" "<<sizeof(m_hdr->maxStacks)<<std::endl;
+  // if(::write(fd,&(m_hdr->Pid),sizeof(m_hdr->Pid))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Writing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // // std::cout<<"pid="<<m_hdr->pid<<" "<<sizeof(m_hdr->pid)<<std::endl;
+  // if(::write(fd,&(m_hdr->StartTime),sizeof(m_hdr->StartTime))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Writing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // if(::write(fd,&(m_hdr->StartTimeUtc),sizeof(m_hdr->StartTimeUtc))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Writing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
+  // // std::cout<<"Start time="<<m_hdr->startTime<<" "<<sizeof(m_hdr->startTime)<<std::endl;
+  // if(::write(fd,&(m_hdr->CmdLength),sizeof(m_hdr->CmdLength))<0){
+  //   char buff[2048];
+  //   throw std::ios_base::failure(std::string("Writing header failed")+
+  // 				 std::string(strerror_r(errno,buff,2048)));
+  // }
   // std::cerr<<"Cmdlength="<<m_hdr->cmdLength<<" "<<sizeof(m_hdr->cmdLength)<<std::endl;
-  if(m_hdr->cmdLength){
-    if(::write(fd,m_hdr->cmdLine,m_hdr->cmdLength)<0){
+  WRITES(m_hdr->key);
+  WRITE(m_hdr->ToolVersion);
+  WRITE(m_hdr->Compression);
+  WRITE(m_hdr->NumRecords);
+  WRITE(m_hdr->MaxStacks);
+  WRITE(m_hdr->BucketSize);
+  WRITE(m_hdr->NumBuckets);
+  WRITE(m_hdr->Pid);
+  WRITE(m_hdr->StartTime);
+  WRITE(m_hdr->StartTimeUtc);
+  WRITE(m_hdr->CmdLength);
+
+  if(m_hdr->CmdLength){
+    if(::write(fd,m_hdr->CmdLine,m_hdr->CmdLength)<0){
       char buff[2048];
-      throw std::ios_base::failure(std::string("Writing header failed")+
+      throw std::ios_base::failure(std::string("Writing header failed with ")+
 				   std::string(strerror_r(errno,buff,2048)));
     } 
     // std::cout<<"cmdLine="<<m_hdr->cmdLine<<std::endl;
   }
   if(keepOffset){
-    if(::lseek(fd,currPos,SEEK_SET)==-1){
+    if(::lseek64(fd,currPos,SEEK_SET)==-1){
       char buff[2048];
-      throw std::ios_base::failure(std::string("Seek failed")+
+      throw std::ios_base::failure(std::string("Seek failed ")+
 				   std::string(strerror_r(errno,buff,2048)));
     }
     // std::cout<<"File Offset "<<currPos<<std::endl;
@@ -690,8 +792,27 @@ int FOM_mallocHook::FileStats::read(std::istream &in){
   return 0;
 }
 
-int FOM_mallocHook::FileStats::write(std::ostream &out){
+int FOM_mallocHook::FileStats::write(std::ostream &out)const{
   return 0;
+}
+
+std::ostream& FOM_mallocHook::FileStats::print(std::ostream &out)const{
+    out<<"Key              = "<<m_hdr->key<<std::endl;
+    out<<"Tool Version     = "<<m_hdr->ToolVersion<<std::endl;
+    out<<"Compression      = "<<m_hdr->Compression<<std::endl;
+    out<<"Num Records      = "<<m_hdr->NumRecords<<std::endl;
+    out<<"Max Stack Depth  = "<<m_hdr->MaxStacks<<std::endl;
+    out<<"Bucket Size      = "<<m_hdr->BucketSize<<std::endl;
+    out<<"Num Buckets      = "<<m_hdr->NumBuckets<<std::endl;
+    out<<"PID              = "<<m_hdr->Pid<<std::endl;
+    out<<"Start time       = "<<m_hdr->StartTime<<std::endl;
+    out<<"Start time UTC   = "<<m_hdr->StartTimeUtc<<std::endl;
+    out<<"Command Line     = "<<std::endl;
+    auto cmdline=getCmdLine();
+    for(size_t t=0;t<cmdline.size();t++){
+      out<<"  arg["<<t<<"]   = "<<cmdline.at(t)<<std::endl;
+    }
+    return out;
 }
 /* 
 INDEXING READER
@@ -704,7 +825,7 @@ FOM_mallocHook::IndexingReader::IndexingReader(std::string fileName,uint indexPe
 										      m_lastIndex(0),m_numRecords(0),
 										      m_lastHdr(0)
 {
-  if(m_fileName.empty())throw std::ios_base::failure("File name is empty");
+  if(m_fileName.empty())throw std::ios_base::failure("File name is empty ");
   int inpFile=open(m_fileName.c_str(),O_RDONLY);
   if(inpFile==-1){
     std::cerr<<"Input file \""<<m_fileName<<"\" does not exist"<<std::endl;
@@ -727,8 +848,8 @@ FOM_mallocHook::IndexingReader::IndexingReader(std::string fileName,uint indexPe
   m_fileStats=new FOM_mallocHook::FileStats();
   //std::cout << m_fileStats << " " << m_fileHandle << std::endl;
   m_fileStats->read(m_fileHandle,false);
-  off_t hdrOff=::lseek(m_fileHandle,0,SEEK_CUR);
-  ::lseek(m_fileHandle,0,SEEK_SET);
+  off_t hdrOff=::lseek64(m_fileHandle,0,SEEK_CUR);
+  ::lseek64(m_fileHandle,0,SEEK_SET);
   m_fileBegin=mmap64(0,sinp.st_size,PROT_READ,MAP_PRIVATE,inpFile,0);
   if(m_fileBegin==MAP_FAILED){
     throw std::ios_base::failure(std::string(strerror_r(errno,buff,2048))+"failed to mmap "+m_fileName);        
@@ -833,34 +954,17 @@ uintptr_t FOM_mallocHook::RecordIndex::getFirstPage()const {
 uintptr_t FOM_mallocHook::RecordIndex::getLastPage()const {
   return (m_h->addr+m_h->size)|pageMask;
 }
-long FOM_mallocHook::RecordIndex::getTimeSec()const{
-  return m_h->tsec;
+
+uint64_t FOM_mallocHook::RecordIndex::getTStart()const{
+  return m_h->tstart;
 }
 
-long FOM_mallocHook::RecordIndex::getTimeNSec() const{
-  return m_h->tnsec;
+uint64_t FOM_mallocHook::RecordIndex::getTReturn()const{
+  return m_h->treturn;
 }
 
-long FOM_mallocHook::RecordIndex::getT0Sec()const{
-  return m_h->tsec;
-}
-
-long FOM_mallocHook::RecordIndex::getT0NSec() const{
-  return m_h->tnsec;
-}
-long FOM_mallocHook::RecordIndex::getT1Sec()const{
-  return m_h->timediffsec;
-}
-
-long FOM_mallocHook::RecordIndex::getT1NSec() const{
-  return m_h->timediffnsec;
-}
-long FOM_mallocHook::RecordIndex::getT2Sec()const{
-  return m_h->timediff2sec;
-}
-
-long FOM_mallocHook::RecordIndex::getT2NSec() const{
-  return m_h->timediff2nsec;
+uint64_t FOM_mallocHook::RecordIndex::getTEnd()const{
+  return m_h->tend;
 }
 
 char FOM_mallocHook::RecordIndex::getAllocType() const{
@@ -938,35 +1042,18 @@ uintptr_t FOM_mallocHook::FullRecord::getFirstPage()const {
 uintptr_t FOM_mallocHook::FullRecord::getLastPage()const {
   return (m_h->addr+m_h->size)|pageMask;
 }
-long FOM_mallocHook::FullRecord::getTimeSec()const{
-  return m_h->tsec;
+uint64_t FOM_mallocHook::FullRecord::getTStart()const{
+  return m_h->tstart;
 }
 
-long FOM_mallocHook::FullRecord::getTimeNSec() const{
-  return m_h->tnsec;
+uint64_t FOM_mallocHook::FullRecord::getTReturn()const{
+  return m_h->treturn;
 }
 
-long FOM_mallocHook::FullRecord::getT0Sec()const{
-  return m_h->tsec;
+uint64_t FOM_mallocHook::FullRecord::getTEnd()const{
+  return m_h->tend;
 }
 
-long FOM_mallocHook::FullRecord::getT0NSec() const{
-  return m_h->tnsec;
-}
-long FOM_mallocHook::FullRecord::getT1Sec()const{
-  return m_h->timediffsec;
-}
-
-long FOM_mallocHook::FullRecord::getT1NSec() const{
-  return m_h->timediffnsec;
-}
-long FOM_mallocHook::FullRecord::getT2Sec()const{
-  return m_h->timediff2sec;
-}
-
-long FOM_mallocHook::FullRecord::getT2NSec() const{
-  return m_h->timediff2nsec;
-}
 
 char FOM_mallocHook::FullRecord::getAllocType() const{
   return m_h->allocType; 

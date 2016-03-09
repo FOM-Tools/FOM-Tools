@@ -26,11 +26,10 @@
 
 class RegionInfo{
  public:
-  RegionInfo():addr(0),size(0),t_sec(0),t_nsec(0),pBegin(0),pEnd(0),flags(0){};
+  RegionInfo():addr(0),size(0),alloc_time(0),pBegin(0),pEnd(0),flags(0){};
   uint64_t addr;//address of allocation
   size_t size; //size of allocation or count of pages
-  long t_sec; //seconds of allocation
-  long t_nsec;// nanoseconds of allocation
+  uint64_t alloc_time;
   uintptr_t pBegin; //start of page block
   uintptr_t pEnd; // end of page block
   int flags; //flags (bits for page stats, overlap for address ranges)
