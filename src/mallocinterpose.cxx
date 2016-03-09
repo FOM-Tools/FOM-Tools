@@ -255,7 +255,7 @@ void show_backtrace (size_t size,void* addr,int depth,int allocType, uint64_t t1
   }
   struct timespec t3;
   int rc=clock_gettime(CLOCK_MONOTONIC,&t3);
-  if(allocType==2){//realloc write fake free first
+  if(allocType==2 && addr!=ra_addr){//realloc write fake free first
     hdr->count=0;
     hdr->addr=(uintptr_t)ra_addr;
     hdr->allocType=0;
