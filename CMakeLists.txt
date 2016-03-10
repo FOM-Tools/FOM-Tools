@@ -5,8 +5,6 @@ set(FOMTOOLS_MINOR_VERSION 0)
 set(FOMTOOLS_PATCH_VERSION 0)
 set(FOMTOOLS_VERSION ${FOMTOOLS_MAJOR_VERSION}.${FOMTOOLS_MINOR_VERSION}.${FOMTOOLS_PATCH_VERSION} )
 
-#--- enable unit testing capabilities ------------------------------------------
-include(CTest)
 
 #--- massage configure options -------------------------------------------------
 add_definitions(--std=c++11)
@@ -42,11 +40,17 @@ endif("$ENV{CMTCONFIG}" STREQUAL "")
 
 #--- find dependencies and set includes ----------------------------------------
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/cmake/")
-find_package(PythonLibs REQUIRED)
+find_package(PythonLibs 2.7 REQUIRED)
 find_package(Unwind REQUIRED)
+find_package(ZLIB)
+#find_package(LibLZMA)
+#find_package(BZip2)
+CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/config-FOMTools.h.in ${PROJECT_BINARY_DIR}/config-FOMTools.h)
 include_directories ("${PROJECT_SOURCE_DIR}/" )
 include_directories(${PYTHON_INCLUDE_DIRS})
-
+if(ZLIB_FOUND)
+include_directories ("${ZLIB_INCLUDE_DIRS}" )
+endif()
 #--- target for Doxygen documentation ------------------------------------------
 include(cmake/FOMToolsDoxygen.cmake)
 
@@ -62,7 +66,13 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/COPYING
 
 #--- project specific subdirectories -------------------------------------------
 add_subdirectory(src)
+option(BUILD_TESTS "Build test example" OFF)
+
+if(BUILD_TESTS)
+#--- enable unit testing capabilities ------------------------------------------
+include(CTest)
 add_subdirectory(test)
+endif()
 
 install (DIRECTORY FOMTools/ DESTINATION include/FOMTools
            PATTERN "*.hpp")
@@ -99,10 +109,12 @@ configure_package_config_file(cmake/FOMToolsConfig.cmake.in
   INSTALL_DESTINATION ${config_install_dir}
   PATH_VARS INCLUDE_INSTALL_DIR LIB_INSTALL_DIR
 )
+
 write_basic_package_version_file(
   ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake
   VERSION "${FOMTOOLS_VERSION}" COMPATIBILITY SameMajorVersion
 )
+
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsConfig.cmake
   ${CMAKE_CURRENT_BINARY_DIR}/FOMToolsConfigVersion.cmake
         DESTINATION ${config_install_dir} )

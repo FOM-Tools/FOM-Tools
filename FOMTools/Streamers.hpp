@@ -31,6 +31,13 @@
 #include <cstdint>
 #include <iostream>
 #include <ctime>
+#include "config-FOMTools.h"
+#ifdef ZLIB_FOUND
+#include "zlib.h"
+#endif
+#ifdef BZip2_FOUND
+#include "bzlib.h"
+#endif
 
 namespace FOM_mallocHook{
   typedef unsigned int index_t;
@@ -137,89 +144,6 @@ namespace FOM_mallocHook{
     const MemRecord&  at(size_t);
     size_t size();
     const FOM_mallocHook::FileStats* getFileStats() const;
-    //from http://stackoverflow.com/questions/7758580/writing-your-own-stl-container/7759622#7759622
-    // class iterator{
-    //   iterator();
-    //   iterator(const iterator&);
-    //   ~iterator();
-    //   typedef difference_type std::ptrdiff_t;
-    //   typedef size_type std::size_t;
-    //   typedef reference MemRecord&;
-    //   typedef pointer MemRecord*;
-    //   typedef const_pointer const MemRecord*;
-    //   typedef const_reference const MemRecord&;
-    //   typedef std::random_access_iterator_tag iterator_category; //or another tag      
-    //   iterator& operator=(const iterator&);
-    //   bool operator==(const iterator&) const;
-    //   bool operator!=(const iterator&) const;
-    //   bool operator<(const iterator&) const; //optional
-    //   bool operator>(const iterator&) const; //optional
-    //   bool operator<=(const iterator&) const; //optional
-    //   bool operator>=(const iterator&) const; //optional
-
-    //   iterator& operator++();
-    //   iterator operator++(int); //optional
-    //   iterator& operator--(); //optional
-    //   iterator operator--(int); //optional
-    //   iterator& operator+=(size_type); //optional
-    //   iterator operator+(size_type) const; //optional
-    //   friend iterator operator+(size_type, const iterator&); //optional
-    //   iterator& operator-=(size_type); //optional            
-    //   iterator operator-(size_type) const; //optional
-    // };
-
-    // class const_iterator {
-    // public:
-    //   typedef difference_type std::ptrdiff_t;
-    //   typedef size_type std::size_t;
-    //   typedef reference MemRecord&;
-    //   typedef pointer MemRecord*;
-    //   typedef const_pointer const MemRecord*;
-    //   typedef const_reference const MemRecord&;
-    //   typedef std::random_access_iterator_tag iterator_category; //or another tag
-
-    //   const_iterator ();
-    //   const_iterator (const const_iterator&);
-    //   const_iterator (const iterator&);
-    //   ~const_iterator();
-
-    //   const_iterator& operator=(const const_iterator&);
-    //   bool operator==(const const_iterator&) const;
-    //   bool operator!=(const const_iterator&) const;
-    //   bool operator<(const const_iterator&) const; //optional
-    //   bool operator>(const const_iterator&) const; //optional
-    //   bool operator<=(const const_iterator&) const; //optional
-    //   bool operator>=(const const_iterator&) const; //optional
-
-    //   const_iterator& operator++();
-    //   const_iterator operator++(int); //optional
-    //   const_iterator& operator--(); //optional
-    //   const_iterator operator--(int); //optional
-    //   const_iterator& operator+=(size_type); //optional
-    //   const_iterator operator+(size_type) const; //optional
-    //   friend const_iterator operator+(size_type, const const_iterator&); //optional
-    //   const_iterator& operator-=(size_type); //optional            
-    //   const_iterator operator-(size_type) const; //optional
-    //   difference_type operator-(const_iterator) const; //optional
-
-    //   const_reference operator*() const;
-    //   const_pointer operator->() const;
-    //   const_reference operator[](size_type) const; //optional
-    // };
-    // typedef std::reverse_iterator<iterator> reverse_iterator; //optional
-    // typedef std::reverse_iterator<const_iterator> const_reverse_iterator; //optional
-    // iterator begin();
-    // const_iterator begin() const;
-    // const_iterator cbegin() const;
-    // iterator end();
-    // const_iterator end() const;
-    // const_iterator cend() const;
-    // reverse_iterator rbegin(); //optional
-    // const_reverse_iterator rbegin() const; //optional
-    // const_reverse_iterator crbegin() const; //optional
-    // reverse_iterator rend(); //optional
-    // const_reverse_iterator rend() const; //optional
-    // const_reverse_iterator crend() const; //optional
 
   private:
     int m_fileHandle;
@@ -259,84 +183,165 @@ namespace FOM_mallocHook{
     const FOM_mallocHook::header* m_lastHdr;    
   };
 
-  //  class FileStats;
+  struct BucketStats{
+    size_t itemsInBucket;
+    size_t uncompressedSize;
+    size_t compressedSize;
+    uint64_t compressionTime;
+  };
+  //  Writers;
   
-  class Writer{
+    class WriterBase{
+    public:
+      WriterBase(std::string fileName,int compress,size_t bucketSize);
+      WriterBase() = delete;
+      virtual ~WriterBase();
+      virtual void writeRecord(const MemRecord& r)=0;
+      virtual void writeRecord(const RecordIndex& r)=0;
+      virtual void writeRecord(const void* hdr)=0;
+      virtual bool closeFile(bool flush=false)=0;
+      virtual bool reopenFile(bool seekEnd=true)=0;
+    protected:
+      std::string m_fileName;
+      size_t m_nRecords;
+      size_t m_maxDepth;
+      int m_fileHandle;
+      bool m_fileOpened;
+      int m_compress;
+      size_t m_bucketSize;
+      FileStats* m_stats;
+      time_t getProcessStartTime();
+      bool parseCmdline(char* buff,size_t *len);
+    };
+
+  class PlainWriter:public WriterBase{
   public:
-    Writer(std::string fileName,int compress,size_t bucketSize);
-    Writer() = delete;
-    ~Writer();
-    bool writeRecord(const MemRecord& r);
-    bool writeRecord(const RecordIndex& r);
-    bool writeRecord(const void* hdr);
+    PlainWriter(std::string fileName,int compress,size_t bucketSize);
+    PlainWriter() = delete;
+    ~PlainWriter();
+    void writeRecord(const MemRecord& r);
+    void writeRecord(const RecordIndex& r);
+    void writeRecord(const void* hdr);
+    bool closeFile(bool flush=false);
+    bool reopenFile(bool seekEnd=true);
+  };
+
+#ifdef ZLIB_FOUND
+  class ZlibWriter:public WriterBase{
+  public:
+    ZlibWriter(std::string fileName,int compress,size_t bucketSize);
+    ZlibWriter() = delete;
+    ~ZlibWriter();
+    void writeRecord(const MemRecord& r);
+    void writeRecord(const RecordIndex& r);
+    void writeRecord(const void* hdr);
     bool closeFile(bool flush=false);
     bool reopenFile(bool seekEnd=true);
   private:
-    time_t getProcessStartTime();
-    bool parseCmdline(char* buff,size_t *len);
-    std::string m_fileName;
-    size_t m_nRecords;
-    size_t m_maxDepth;
-    int m_fileHandle;
-    bool m_fileOpened;
-    char* m_bucket;
-    char* m_cBucket;
-    int m_compress;
-    size_t m_bucketSize;
-    FileStats* m_stats;
+    void compressBuffer();
+    size_t m_nRecordsInBuffer;
+    size_t m_bucketOffset;
+    size_t m_compBuffLen;
+    int m_compLevel;
+    BucketStats m_bs;
+    uint8_t *m_buff;
+    uint8_t *m_cBuff;    
   };
+#endif
 
-  class FileStats{
+#ifdef BZip2_FOUND
+  class BZip2Writer:public WriterBase{
   public:
-    FileStats();
-    ~FileStats();
-    //getters
-    int      getVersion()const;
-    size_t   getNumRecords()const;
-    size_t   getMaxStackLen() const;
-    std::vector<std::string> getCmdLine()const;
-    uint64_t getStartTime() const;
-    uint64_t getStartUTC() const;//in ns from utc 0
-    uint32_t getPid()const;
-    int      getCompression()const;
-    size_t   getBucketSize()const;
-    size_t   getNumBuckets()const;
-
-    //setters
-    void setVersion(int);
-    void setNumRecords(size_t);
-    void setStackDepthLimit(size_t);
-    void setCmdLine(char*,size_t);
-    void setStartTime(uint64_t t);
-    void setStartTimeUTC(uint64_t t);
-    void setPid(uint32_t);
-    void setCompression(int Comp);
-    void setBucketSize(size_t bsize);
-    void setNumBuckets(size_t bsize);
-
-    int read(int fd,bool keepOffset=true);
-    int write(int fd,bool keepOffset=true)const;
-    int read(std::istream &in);
-    int write(std::ostream &out)const;
-    std::ostream& print(std::ostream &out=std::cout)const;
+    BZip2Writer(std::string fileName,int compress,size_t bucketSize){};
+    BZip2Writer() = delete;
+    ~BZip2Writer(){};
+    void writeRecord(const MemRecord& r){};
+    void writeRecord(const RecordIndex& r){};
+    void writeRecord(const void* hdr){};
+    bool closeFile(bool flush=false){};
+    bool reopenFile(bool seekEnd=true){};
   private:
-    friend class FOM_mallocHook::Writer;
-    struct fileHdr{
-      char key[4]; //HEADER MARKER
-      int ToolVersion; //Version used to generate
-      int Compression;// 0 -no compression 10000x zlib
-      size_t NumRecords; //Number of records in file
-      size_t MaxStacks; //Max number of stacks 
-      size_t BucketSize;// Size of compressed buffer, 0 otherwise
-      size_t NumBuckets;// Number of buckets in file
-      uint32_t Pid;//PID of process
-      uint64_t StartTime;// Start time of process in machine time
-      uint64_t StartTimeUtc;// Start time of process in UTC
-      size_t CmdLength; //length of command-line
-      char* CmdLine;// commandline string
-    } *m_hdr;
+    void compressBuffer(size_t lenB){};
+    size_t m_nRecordsInBuffer;
+    size_t m_bucketOffset;
+    BucketStats m_bs;
+    char *m_buff;
+    char *m_cBuff;    
   };
+#endif
+  
+#ifdef LibLZMA_FOUND
+  class LZMAWriter:public WriterBase{
+public:
+  LZMAWriter(std::string fileName,int compress,size_t bucketSize){};
+  LZMAWriter() = delete;
+  ~LZMAWriter(){};
+  void writeRecord(const MemRecord& r){};
+  void writeRecord(const RecordIndex& r){};
+  void writeRecord(const void* hdr){};
+  bool closeFile(bool flush=false){};
+  bool reopenFile(bool seekEnd=true){};
+private:
+  void compressBuffer(size_t lenB){};
+  size_t m_nRecordsInBuffer;
+  size_t m_bucketOffset;
+  BucketStats m_bs;
+  char *m_buff;
+  char *m_cBuff;    
+};
+#endif
+    
+  class FileStats{
+public:
+  FileStats();
+  ~FileStats();
+  //getters
+  int      getVersion()const;
+  size_t   getNumRecords()const;
+  size_t   getMaxStackLen() const;
+  std::vector<std::string> getCmdLine()const;
+  uint64_t getStartTime() const;
+  uint64_t getStartUTC() const;//in ns from utc 0
+  uint32_t getPid()const;
+  int      getCompression()const;
+  size_t   getBucketSize()const;
+  size_t   getNumBuckets()const;
 
+  //setters
+  void setVersion(int);
+  void setNumRecords(size_t);
+  void setStackDepthLimit(size_t);
+  void setCmdLine(char*,size_t);
+  void setStartTime(uint64_t t);
+  void setStartTimeUTC(uint64_t t);
+  void setPid(uint32_t);
+  void setCompression(int Comp);
+  void setBucketSize(size_t bsize);
+  void setNumBuckets(size_t bsize);
+
+  int read(int fd,bool keepOffset=true);
+  int write(int fd,bool keepOffset=true)const;
+  int read(std::istream &in);
+  int write(std::ostream &out)const;
+  std::ostream& print(std::ostream &out=std::cout)const;
+private:
+  friend class FOM_mallocHook::WriterBase;
+  struct fileHdr{
+  char key[4]; //HEADER MARKER
+  int ToolVersion; //Version used to generate
+  int Compression;// 0 -no compression 10000x zlib
+  size_t NumRecords; //Number of records in file
+  size_t MaxStacks; //Max number of stacks 
+  size_t BucketSize;// Size of compressed buffer, 0 otherwise
+  size_t NumBuckets;// Number of buckets in file
+  uint32_t Pid;//PID of process
+  uint64_t StartTime;// Start time of process in machine time
+  uint64_t StartTimeUtc;// Start time of process in UTC
+  uint64_t CompressionHeaderSize;
+  size_t CmdLength; //length of command-line
+  char* CmdLine;// commandline string
+} *m_hdr;
+};
 }
 
 #endif

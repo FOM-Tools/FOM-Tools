@@ -61,9 +61,9 @@ struct timespec tp;
 int rc=clock_gettime(CLOCK_MONOTONIC,&tp);
 static long starttime = (long)tp.tv_sec;
 
-static FOM_mallocHook::Writer* fwriter=0;
-FOM_mallocHook::Writer*& currWriter(FOM_mallocHook::Writer* w){
-  static FOM_mallocHook::Writer* wLocal=0;
+static FOM_mallocHook::WriterBase* fwriter=0;
+FOM_mallocHook::WriterBase*& currWriter(FOM_mallocHook::WriterBase* w){
+  static FOM_mallocHook::WriterBase* wLocal=0;
   if(w){
     wLocal=w;
     //std::cerr<<"Setting wLocal to "<<(void*)w<<" curr value="<<(void*)wLocal<<std::endl;
@@ -107,7 +107,7 @@ std::vector<std::string>& symNames(){
 const char* getOutputFileName();
 
 
-FOM_mallocHook::Writer* getWriter();
+FOM_mallocHook::WriterBase* getWriter();
 namespace FOM_mallocHook{
 
   class MallocBuildInfo{
@@ -121,7 +121,7 @@ static FOM_mallocHook::MallocBuildInfo *mhbuildInfo=0;
 
 //debug with set exec-wrapper env 'LD_PRELOAD=...'
 void atexit_handler(){
-  FOM_mallocHook::Writer*& FWriter(currWriter(0));
+  FOM_mallocHook::WriterBase*& FWriter(currWriter(0));
   //std::cerr<<__PRETTY_FUNCTION__<<" @pid "<<getpid()<<std::endl;
   if(!FWriter){
     //std::cerr<<"writer is 0 @pid="<<getpid()<<std::endl;
@@ -217,14 +217,14 @@ void show_backtrace (size_t size,void* addr,int depth,int allocType, uint64_t t1
   FOM_mallocHook::index_t *stackRecord=(FOM_mallocHook::index_t*)(hdr+1);
   //if (t1.tv_sec-starttime > 1000 && addr != 0 && size > 0){ //skip init time with malloc hook
   if (addr != 0 && size > 0){
-    unw_cursor_t cursor; unw_context_t uc;
-    unw_word_t ip;
-    unw_getcontext(&uc);
-    unw_init_local(&cursor, &uc);
     if(symMap().size()>=std::numeric_limits<FOM_mallocHook::index_t>::max()){
       std::cerr<<" Malloc hook has reached its indexing capacity. Please recompile with a wider index_t. Aborting!"<<std::endl;
       std::abort();
     }
+    unw_cursor_t cursor; unw_context_t uc;
+    unw_word_t ip;
+    unw_getcontext(&uc);
+    unw_init_local(&cursor, &uc);
     while (unw_step(&cursor) > 0 && count<depth) {
       unw_get_reg(&cursor, UNW_REG_IP, &ip);
       auto it=symMap().insert(std::make_pair(ip,symMap().size()));
@@ -254,8 +254,8 @@ void show_backtrace (size_t size,void* addr,int depth,int allocType, uint64_t t1
     }
   }
   struct timespec t3;
-  int rc=clock_gettime(CLOCK_MONOTONIC,&t3);
   if(allocType==2){//realloc write fake free first
+    int rc=clock_gettime(CLOCK_MONOTONIC,&t3);
     hdr->count=0;
     hdr->addr=(uintptr_t)ra_addr;
     hdr->allocType=0;
@@ -268,7 +268,7 @@ void show_backtrace (size_t size,void* addr,int depth,int allocType, uint64_t t1
   hdr->addr=(uintptr_t)addr;                       //returned addres
   hdr->count=count;
   hdr->allocType=(char)allocType;
-  rc=clock_gettime(CLOCK_MONOTONIC,&t3);
+  int rc=clock_gettime(CLOCK_MONOTONIC,&t3);
   hdr->tend = t3.tv_sec*1000000000l+t3.tv_nsec;
   fwriter->writeRecord(hdr);
   counter = counter + 1;
@@ -316,7 +316,7 @@ int getShift(){
 int getMaxDepth(){
   //return 20;
   char* v=getenv("MALLOC_INTERPOSE_DEPTH");
-  int s=10;
+  int s=20;
   if(v){
     errno=0;
     s=::strtol(v,0,10);
@@ -394,7 +394,7 @@ FILE* getOutputFile(){
   return ofile;
 }
 
-FOM_mallocHook::Writer* getWriter(){
+FOM_mallocHook::WriterBase* getWriter(){
   char* v=getenv("MALLOC_INTERPOSE_OUTFILE");
   std::string fileN;
   if(v){
@@ -413,7 +413,7 @@ FOM_mallocHook::Writer* getWriter(){
     fileN=buff;
   }
   char *com=getenv("MALLOC_INTERPOSE_COMPRESSION");
-  int compress=0;
+  int32_t compress=0;
   if(com){
     char* end;
     compress=std::strtol(com,&end,10);
@@ -424,7 +424,43 @@ FOM_mallocHook::Writer* getWriter(){
     char* end;
     bucketSize=std::strtoull(buck,&end,10);
   }
-  FOM_mallocHook::Writer *w=new FOM_mallocHook::Writer(fileN,compress,bucketSize);
+  
+  FOM_mallocHook::WriterBase *w=0;
+  int compressionMode=(compress>>24); //higher 8 bits for compression mode
+  switch(compressionMode){
+  case(0):
+    {
+      w=new FOM_mallocHook::PlainWriter(fileN,compress,bucketSize);
+      break;
+    }
+#ifdef ZLIB_FOUND
+  case(1):
+    {
+      w=new FOM_mallocHook::ZlibWriter(fileN,compress,bucketSize);
+      break;
+    }
+#endif
+#ifdef BZip2_FOUND    
+  case(2):
+    {
+      w=new FOM_mallocHook::BZip2Writer(fileN,compress,bucketSize);
+      break;
+    }
+#endif
+
+#ifdef LibLZMA_FOUND    
+  case(3):
+    {
+      w=new FOM_mallocHook::LZMAWriter(fileN,compress,bucketSize);
+      break;
+    }
+#endif
+ default:
+   {
+     w=new FOM_mallocHook::PlainWriter(fileN,compress,bucketSize);   
+     break;
+   }
+  }
   return w;
 }
 
@@ -550,7 +586,7 @@ void* realloc(void *ptr, size_t size) throw(){
 #else
     show_backtraceGNU(0,size,ret,maxDepth);
 #endif
-  malloc_tracing_flag_sami.clear();
+    malloc_tracing_flag_sami.clear();
   }
   return ret;
 }

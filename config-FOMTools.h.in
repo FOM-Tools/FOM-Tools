@@ -1,0 +1,4 @@
+#cmakedefine ZLIB_FOUND
+#cmakedefine LibLZMA_FOUND
+#cmakedefine BZip2_FOUND
+

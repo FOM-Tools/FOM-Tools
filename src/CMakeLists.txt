@@ -7,6 +7,10 @@ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" )
   set_target_properties(FOMUtils PROPERTIES COMPILE_FLAGS "-ftree-vectorize" )
 endif()
 set_target_properties(FOMUtils PROPERTIES LINK_FLAGS "-static-libstdc++ -static-libgcc" )
+if(ZLIB_FOUND)
+  target_include_directories(FOMUtils BEFORE PUBLIC ${ZLIB_INCLUDE_DIR} ${PROJECT_BINARY_DIR})
+  target_link_libraries(FOMUtils "${ZLIB_LIBRARY_RELEASE}" )  
+endif()
 
 
 #--- MallocHook ----------------------------------------------------------------
