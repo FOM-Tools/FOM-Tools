@@ -4,8 +4,15 @@
 #include <vector>
 #include <time.h>
 #include <unistd.h>
+#include <getopt.h>
+#include <random>
+#include <functional>
 
-#include "gtest/gtest.h"
+void printUsage(char* name){
+  std::cout<<"Usage:  "<<name<<" -r <num>  "<<std::endl;
+  std::cout<<"     --random  (-r)  number of random allocation and free attemps"<<std::endl;
+  std::cout<<"     --leaks (-l)  Emulate leaks at the end"<<std::endl;
+}
 
 bool test(size_t t){
   bool success(true);
@@ -55,8 +62,7 @@ bool test(size_t t){
   return success;
 }
 
-TEST(FOMTools, malloc_hook) {
-  //void testHook(){
+void testHook(){
   bool success(true);
   std::vector<int> vals{1,5,6,8,9,10,11,12,14};
   for(size_t i=0;i<vals.size();i++){
@@ -86,11 +92,144 @@ TEST(FOMTools, malloc_hook) {
   if (!rc)
     printf("CLOCK_MONOTONIC_COARSE: %ldns\n", res.tv_nsec);
   std::string s;
-  EXPECT_TRUE(success);
+}
+
+void runRandomAllocs(size_t nRand,bool leaks){
+
+  std::default_random_engine typeEng,posEng,sizeEng;
+  typeEng.seed(1234);
+  posEng.seed(1234);
+  sizeEng.seed(1234);
+  std::uniform_int_distribution<int> allocDist(0,3);
+  std::uniform_int_distribution<int> sizeDist(3,13);
+  std::uniform_real_distribution<double> posDist(0,1);
+  auto typeDice = std::bind ( allocDist, typeEng );
+  auto posDice = std::bind ( posDist, posEng );
+  auto sizeDice = std::bind ( sizeDist, sizeEng );
+  //std::vector<int> vals{1,5,6,8,9,10,11,12,14};
+  std::vector<char*> memLocations;
+  std::vector<std::string> opName{"free","malloc","realloc","calloc"};
+  size_t s=1<<sizeDice();
+  char* v=(char*)malloc(s);
+  printf("%s %x size= %d\n","malloc",v,s);
+  memLocations.push_back(v);
+  for(size_t t=0;t<nRand;t++){
+    int aType=typeDice();
+    //printf("Type is %d ",aType);
+    switch(aType){
+    case 0://free
+      {
+	if(memLocations.size()){
+	  size_t loc=posDice()*(memLocations.size()-1);
+	  v=memLocations[loc];
+	  memLocations.erase(memLocations.begin()+loc);
+	  printf("%s %x\n",opName[aType].c_str(),v);
+	  free(v);
+	}else{
+	  t--;
+	  continue;
+	}
+	break;
+      }
+    case 1://malloc
+      {
+	s=1<<sizeDice();
+	v=(char*)malloc(s);
+	memLocations.push_back(v);
+	printf("%s %x size= %d\n",opName[aType].c_str(),v,s);	
+	break;
+      }
+    case 2://realloc
+      {
+	if(memLocations.size()){
+	  size_t loc=posDice()*(memLocations.size()-1);
+	  v=memLocations[loc];
+	  memLocations.erase(memLocations.begin()+loc);
+	  s=1<<sizeDice();
+	  char *n=(char*)realloc(v,s);
+	  memLocations.push_back(n);
+	  printf("%s old=%x new=%x size= %d\n",opName[aType].c_str(),v,n,s);
+	}else{
+	  t--;
+	  continue;
+	}
+	break;
+      }
+    case 3://calloc
+      {
+	s=1<<sizeDice();
+	v=(char*)malloc(s);
+	memLocations.push_back(v);
+	printf("%s %x size= %d\n",opName[aType].c_str(),v,s);	
+	break;
+      }
+    default:
+      {
+	t--;
+	break;
+      }
+    }
+  }
+  if(leaks){
+    if(memLocations.size()){
+      size_t toFree=posDice()*(memLocations.size()-1);
+      for(size_t t=0;t<toFree;t++){
+	size_t loc=posDice()*(memLocations.size()-1);
+	free(memLocations[loc]);
+	printf("free %x\n",memLocations[loc]);
+	memLocations.erase(memLocations.begin()+loc);
+      }
+    }
+    for(size_t t=0;t<memLocations.size();t++){
+      printf("leak %x\n",memLocations[t]);
+    }
+  }else{
+    for(size_t t=0;t<memLocations.size();t++){
+      size_t loc=posDice()*(memLocations.size()-1);
+      free(memLocations[loc]);
+      printf("free %x\n",memLocations[loc]);
+      memLocations.erase(memLocations.begin()+loc);
+    }
+  }
 }
 
 int main(int argc, char **argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-   return RUN_ALL_TESTS();
-  //testHook();
+  int c;
+  size_t nRandom=0;
+  bool leaks=false;
+  while (1) {
+    int option_index = 0;
+    static struct option long_options[] = {
+      {"help", 0, 0, 'h'},
+      {"random", 1, 0, 'r'},
+      {"leaks", 0, 0, 'l'},
+      {0, 0, 0, 0}
+    };
+    c = getopt_long(argc, argv, "hr:l",
+		    long_options, &option_index);
+    if (c == -1)
+      break;
+    switch (c) {
+    case 'h':
+      printUsage(argv[0]);
+      exit(EXIT_SUCCESS);
+      break;
+    case 'r':  {
+      nRandom=std::strtoul(optarg,0,10);
+      break;
+    }
+    case 'l':  {
+      leaks=true;
+      break;
+    }
+    default:
+      printf("unknown parameter! getopt returned character code 0%o ??\n", c);
+    }
+  }
+  pid_t p=getpid();
+  testHook();
+  if(p!=getpid())return 0;
+  if(nRandom>0){
+    runRandomAllocs(nRandom,leaks);
+  }
 }

@@ -70,7 +70,7 @@ option(BUILD_TESTS "Build test example" OFF)
 
 if(BUILD_TESTS)
 #--- enable unit testing capabilities ------------------------------------------
-include(CTest)
+#include(CTest)
 add_subdirectory(test)
 endif()
 
