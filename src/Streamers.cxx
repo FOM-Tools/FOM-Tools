@@ -33,6 +33,7 @@
 #include <sys/time.h>
 #include <chrono> //to get utc
 #include <ctime>
+#include <algorithm>
 
 #define handle_error(msg)				\
   do { perror(msg); exit(EXIT_FAILURE); } while (0)
@@ -46,6 +47,14 @@ static const uintptr_t pageMask=(sysconf(_SC_PAGE_SIZE) - 1);
   throw std::ios_base::failure(std::string("writing "#X)+std::string(" failed")+	\
 				 std::string(strerror_r(errno,buff,2048)));} \
   //std::cerr<<"Write "<<#X<<" = "<<X<<" sizeof="<<sizeof(X)<<" pid="<<getpid()<<" fd="<<fd<<" offs="<<::lseek64(fd,0,SEEK_CUR)<<std::endl;
+#define READS(F,X) if(::read(F, (X) , sizeof(X))<0){char buff[2048];	\
+    throw std::ios_base::failure(std::string("Parsing header failed ")+	\
+				 std::string(strerror_r(errno,buff,2048)));} \
+  //std::cerr<<"Read "<<#X<<" = "<<X<<" sizeof="<<sizeof(X)<<" pid="<<getpid()<<" fd="<<fd<<" offs="<<::lseek64(fd,0,SEEK_CUR)<<std::endl;
+#define READ(F,X) if(::read(F, &(X) , sizeof(X))<0){char buff[2048];	\
+    throw std::ios_base::failure(std::string("Parsing header failed ")+	\
+				 std::string(strerror_r(errno,buff,2048)));} \
+  //std::cerr<<"Read "<<#X<<" = "<<X<<" sizeof="<<sizeof(X)<<" pid="<<getpid()<<" fd="<<fd<<" offs="<<::lseek64(fd,0,SEEK_CUR)<<std::endl;
 
 
 FOM_mallocHook::MemRecord::MemRecord(void* r){
@@ -125,7 +134,8 @@ std::vector<FOM_mallocHook::index_t> FOM_mallocHook::MemRecord::getStacks() cons
  */
 
 FOM_mallocHook::Reader::Reader(std::string fileName):m_fileHandle(-1),
-						     m_fileLength(0),m_fileName(fileName),m_fileBegin(0),m_fileStats(0),m_fileOpened(false)
+						     m_fileLength(0),m_fileName(fileName),
+						     m_fileBegin(0),m_fileStats(0),m_fileOpened(false)
 {
   if(m_fileName.empty())throw std::ios_base::failure("File name is empty");
   int inpFile=open(m_fileName.c_str(),O_RDONLY);
@@ -163,7 +173,7 @@ FOM_mallocHook::Reader::Reader(std::string fileName):m_fileHandle(-1),
   FOM_mallocHook::header *h=(FOM_mallocHook::header*)(((uintptr_t)m_fileBegin)+hdrOff);
   while ((void*)h<fileEnd){
     m_records.emplace_back((void*)h);
-    const auto hdr=m_records.back().getHeader();
+    //const auto hdr=m_records.back().getHeader();
     h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count);
   }
   std::cout<<"Found "<<m_records.size()<<" records"<<std::endl;
@@ -197,7 +207,7 @@ FOM_mallocHook::WriterBase::WriterBase(std::string fileName,int comp,size_t bsiz
 										   m_bucketSize(bsize),
 										   m_stats(0){
   if(m_fileName.empty())throw std::ios_base::failure("File name is empty");
-  int outFile=open(m_fileName.c_str(),O_WRONLY|O_CREAT|O_TRUNC,(S_IRWXU^S_IXUSR)|(S_IRWXG^S_IXGRP)|(S_IROTH));
+  int outFile=open(m_fileName.c_str(),O_RDWR|O_CREAT|O_TRUNC,(S_IRWXU^S_IXUSR)|(S_IRWXG^S_IXGRP)|(S_IROTH));
   //std::cerr<<__PRETTY_FUNCTION__<<m_fileName<<" @fd="<<outFile<<" pid= "<<getpid()<<std::endl;
   if(outFile==-1){
     std::cerr<<"Can't open out file \""<<m_fileName<<"\""<<std::endl;
@@ -209,7 +219,7 @@ FOM_mallocHook::WriterBase::WriterBase(std::string fileName,int comp,size_t bsiz
   m_stats->setVersion(20000);
   m_stats->setPid(getpid());
   struct timespec tp;
-  int rc=clock_gettime(CLOCK_MONOTONIC,&tp);
+  clock_gettime(CLOCK_MONOTONIC,&tp);
   m_stats->setStartTime(tp.tv_sec*1000000000l+tp.tv_nsec);
   m_stats->setStartTimeUTC(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   size_t len=2048;
@@ -228,7 +238,12 @@ FOM_mallocHook::WriterBase::WriterBase(std::string fileName,int comp,size_t bsiz
   m_maxDepth=0;
   delete[] buff;
 }
-
+bool FOM_mallocHook::WriterBase::updateStats(){
+  if(m_nRecords==0 && m_stats && m_fileHandle>=0){
+    ::lseek64(m_fileHandle,0,SEEK_SET);
+    m_stats->write(m_fileHandle,false);
+  }
+}
 FOM_mallocHook::PlainWriter::PlainWriter(std::string fileName,int comp,size_t bsize):WriterBase(fileName,comp,bsize){
 }
 
@@ -318,7 +333,7 @@ bool FOM_mallocHook::WriterBase::parseCmdline(char* b,size_t *len){
   }else if(cmdLen==0){
     close(cmdHandle);
     return false;
-  }else if(cmdLen==*len){//buffer may not be enough!
+  }else if((size_t)cmdLen==*len){//buffer may not be enough!
     std::cerr<<"Warning commandline may be incomplete! buffer filled up completely"<<std::endl;
     *len=cmdLen;
   }else{
@@ -425,7 +440,7 @@ FOM_mallocHook::FileStats::FileStats(){
   m_hdr->Pid=0;
   m_hdr->CmdLength=0;
   m_hdr->CmdLine=0;
-  
+  m_hdr->CompressionHeaderSize=0;
 }
 
 FOM_mallocHook::FileStats::~FileStats(){
@@ -482,6 +497,13 @@ size_t   FOM_mallocHook::FileStats::getNumBuckets()const{
   return m_hdr->NumBuckets;
 }
 
+size_t FOM_mallocHook::FileStats::getCompressionHeaderSize()const{
+  return m_hdr->CompressionHeaderSize;
+}
+
+void FOM_mallocHook::FileStats::setCompressionHeaderSize(size_t t){
+  m_hdr->CompressionHeaderSize=t;
+}
 
 void FOM_mallocHook::FileStats::setVersion(int ver){
   m_hdr->ToolVersion=ver;
@@ -503,6 +525,7 @@ void FOM_mallocHook::FileStats::setCmdLine(char* cmd,size_t len){
     m_hdr->CmdLine=new char[len+1];
     ::memcpy(m_hdr->CmdLine,cmd,len);
     m_hdr->CmdLine[len]='\0';
+    //std::cout<<"len ="<<len<<" cmd="<<cmd<<std::endl;
   }else{
     m_hdr->CmdLine=0; 
   }
@@ -533,14 +556,6 @@ void FOM_mallocHook::FileStats::setNumBuckets(size_t n){
 }
 
 int FOM_mallocHook::FileStats::read(int fd,bool keepOffset){
-#define READS(X) if(::read(fd, (X) , sizeof(X))<0){char buff[2048];	\
-    throw std::ios_base::failure(std::string("Parsing header failed ")+	\
-				 std::string(strerror_r(errno,buff,2048)));} \
-  //std::cerr<<"Read "<<#X<<" = "<<X<<" sizeof="<<sizeof(X)<<" pid="<<getpid()<<" fd="<<fd<<" offs="<<::lseek64(fd,0,SEEK_CUR)<<std::endl;
-#define READ(X) if(::read(fd, &(X) , sizeof(X))<0){char buff[2048];	\
-    throw std::ios_base::failure(std::string("Parsing header failed ")+	\
-				 std::string(strerror_r(errno,buff,2048)));} \
-  //std::cerr<<"Read "<<#X<<" = "<<X<<" sizeof="<<sizeof(X)<<" pid="<<getpid()<<" fd="<<fd<<" offs="<<::lseek64(fd,0,SEEK_CUR)<<std::endl;
   if(fd<0){
     throw std::ios_base::failure("Invalid file descriptor in read()");
   }
@@ -557,20 +572,20 @@ int FOM_mallocHook::FileStats::read(int fd,bool keepOffset){
 				 std::string(strerror_r(errno,buff,2048)));
   }
   
-  READS(m_hdr->key);
-  READ(m_hdr->ToolVersion);
-  READ(m_hdr->Compression);
-  READ(m_hdr->NumRecords);
-  READ(m_hdr->MaxStacks);
-  READ(m_hdr->BucketSize);
-  READ(m_hdr->NumBuckets);
-  READ(m_hdr->Pid);
-  READ(m_hdr->StartTime);
-  READ(m_hdr->StartTimeUtc);
-  if(m_hdr->Compression>0){
-    READ(m_hdr->CompressionHeaderSize);
-  }
-  READ(m_hdr->CmdLength);
+  READS(fd,m_hdr->key);
+  READ(fd,m_hdr->ToolVersion);
+  READ(fd,m_hdr->Compression);
+  READ(fd,m_hdr->NumRecords);
+  READ(fd,m_hdr->MaxStacks);
+  READ(fd,m_hdr->BucketSize);
+  READ(fd,m_hdr->NumBuckets);
+  READ(fd,m_hdr->Pid);
+  READ(fd,m_hdr->StartTime);
+  READ(fd,m_hdr->StartTimeUtc);
+  //  if(m_hdr->Compression>0){
+  READ(fd,m_hdr->CompressionHeaderSize);
+    // }
+  READ(fd,m_hdr->CmdLength);
   delete[] m_hdr->CmdLine;
   m_hdr->CmdLine=0;
   if(m_hdr->CmdLength){
@@ -621,9 +636,9 @@ int FOM_mallocHook::FileStats::write(int fd,bool keepOffset)const{
   WRITE(fd,m_hdr->Pid);
   WRITE(fd,m_hdr->StartTime);
   WRITE(fd,m_hdr->StartTimeUtc);
-  if(m_hdr->Compression!=0){
-    WRITE(fd,m_hdr->CompressionHeaderSize);
-  }
+  //if(m_hdr->Compression!=0){
+  WRITE(fd,m_hdr->CompressionHeaderSize);
+    //}
   WRITE(fd,m_hdr->CmdLength);
 
   if(m_hdr->CmdLength){
@@ -675,9 +690,16 @@ std::ostream& FOM_mallocHook::FileStats::print(std::ostream &out)const{
    INDEXING READER
 */
 
-FOM_mallocHook::IndexingReader::IndexingReader(std::string fileName,uint indexPeriod):m_fileHandle(-1),
+FOM_mallocHook::ReaderBase::ReaderBase(const std::string& f):m_fileStats(0),m_fileName(f){
+
+}
+FOM_mallocHook::ReaderBase::~ReaderBase(){
+
+}
+
+FOM_mallocHook::IndexingReader::IndexingReader(std::string fileName,uint indexPeriod):ReaderBase(fileName),m_fileHandle(-1),
 										      m_fileLength(0),m_fileName(fileName),
-										      m_fileBegin(0),m_fileStats(0),m_fileOpened(false),
+										      m_fileBegin(0),m_fileOpened(false),
 										      m_period(indexPeriod),m_remainder(0),
 										      m_lastIndex(0),m_numRecords(0),
 										      m_lastHdr(0)
@@ -730,9 +752,9 @@ FOM_mallocHook::IndexingReader::IndexingReader(std::string fileName,uint indexPe
   std::cout<<"Counted "<<count<<" records. Created "<<m_records.size()<<" index points. Remaining "<< m_remainder<<" records"<<std::endl;
 }
 
-const FOM_mallocHook::FileStats* FOM_mallocHook::IndexingReader::getFileStats()const{
-  return m_fileStats;
-}
+// const FOM_mallocHook::FileStats* FOM_mallocHook::IndexingReader::getFileStats()const{
+//   return m_fileStats;
+// }
 
 FOM_mallocHook::IndexingReader::~IndexingReader(){
   if(m_fileOpened){
@@ -740,6 +762,7 @@ FOM_mallocHook::IndexingReader::~IndexingReader(){
     close(m_fileHandle);
     m_records.clear();
   }
+  delete m_fileStats;
 }
 
 const FOM_mallocHook::RecordIndex FOM_mallocHook::IndexingReader::at(size_t t){
@@ -769,6 +792,10 @@ const FOM_mallocHook::RecordIndex FOM_mallocHook::IndexingReader::at(size_t t){
   return FOM_mallocHook::RecordIndex(m_lastHdr);
 }
 
+FOM_mallocHook::FullRecord FOM_mallocHook::IndexingReader::At(size_t t){
+  return FOM_mallocHook::FullRecord(at(t));
+}
+
 size_t FOM_mallocHook::IndexingReader::size(){
   return (((m_records.size()-1)*m_period)+m_remainder+1);
 }
@@ -779,14 +806,11 @@ size_t FOM_mallocHook::IndexingReader::indexedSize(){
 /*
 // Record Index
 */
-FOM_mallocHook::RecordIndex::RecordIndex(const FOM_mallocHook::header* h):m_h(0),m_overlap(MemRecord::Undefined){
+FOM_mallocHook::RecordIndex::RecordIndex(const FOM_mallocHook::header* h):m_h(0){
   if(h){
     m_h=h;
   }
 }
-FOM_mallocHook::MemRecord::OVERLAP_TYPE FOM_mallocHook::RecordIndex::getOverlap()const {return m_overlap;};
-
-void FOM_mallocHook::RecordIndex::setOverlap(FOM_mallocHook::MemRecord::OVERLAP_TYPE o){m_overlap=o;}
 
 FOM_mallocHook::RecordIndex::~RecordIndex(){};
 
@@ -848,33 +872,48 @@ std::vector<FOM_mallocHook::index_t> FOM_mallocHook::RecordIndex::getStacks() co
   FullRecord
 */
 
-FOM_mallocHook::FullRecord::FullRecord(const FOM_mallocHook::header* h):m_h(0),m_overlap(MemRecord::Undefined){
+FOM_mallocHook::FullRecord::FullRecord(const void* hd):m_h(0){
+  auto h=(const FOM_mallocHook::header*)hd;
   if(h){//make a local copy
     m_h=(FOM_mallocHook::header*)new char[sizeof(FOM_mallocHook::header)+(h->count*sizeof(FOM_mallocHook::index_t))];
     *m_h=*h;
     auto dst=((FOM_mallocHook::index_t*)(m_h+1));
+    
     auto src=((FOM_mallocHook::index_t*)(h+1));
-    for(int i=0;i<h->count;i++){
-      src[i]=dst[i];
+    // for(int i=0;i<h->count;i++){
+    //   src[i]=dst[i];
+    // }
+    ::memcpy(dst,src,sizeof(FOM_mallocHook::index_t)*h->count);
+  }
+}
+
+FOM_mallocHook::FullRecord::FullRecord(const RecordIndex& hd):m_h(0){
+  auto h=hd.getHeader();
+  if(h){//make a local copy
+    m_h=(FOM_mallocHook::header*)new char[sizeof(FOM_mallocHook::header)+(h->count*sizeof(FOM_mallocHook::index_t))];
+    *m_h=*h;
+    auto dst=((FOM_mallocHook::index_t*)(m_h+1));
+    int nStacks=0;
+    auto src=hd.getStacks(&nStacks);
+    if(nStacks){
+      ::memcpy(dst,src,sizeof(FOM_mallocHook::index_t)*nStacks);
     }
   }
 }
 
-FOM_mallocHook::FullRecord::FullRecord(const FullRecord& rhs):m_h(0),m_overlap(rhs.m_overlap){
+FOM_mallocHook::FullRecord::FullRecord(const FullRecord& rhs):m_h(0){
   if(rhs.m_h){//make a local copy
     m_h=(FOM_mallocHook::header*)new char[sizeof(FOM_mallocHook::header)+(rhs.m_h->count*sizeof(FOM_mallocHook::index_t))];
-    *m_h=*rhs.m_h;
-    auto dst=((FOM_mallocHook::index_t*)(m_h+1));
-    auto src=((FOM_mallocHook::index_t*)(rhs.m_h+1));
-    for(int i=0;i<rhs.m_h->count;i++){
-      src[i]=dst[i];
-    }
+    // *m_h=*rhs.m_h;
+    // auto dst=((FOM_mallocHook::index_t*)(m_h+1));
+    // auto src=((FOM_mallocHook::index_t*)(rhs.m_h+1));
+    // for(int i=0;i<rhs.m_h->count;i++){
+    //   src[i]=dst[i];
+    // }
+    ::memcpy(m_h,rhs.m_h,sizeof(*m_h)+sizeof(FOM_mallocHook::index_t)*rhs.m_h->count);
   }
 }
 
-FOM_mallocHook::MemRecord::OVERLAP_TYPE FOM_mallocHook::FullRecord::getOverlap()const {return m_overlap;};
-
-void FOM_mallocHook::FullRecord::setOverlap(FOM_mallocHook::MemRecord::OVERLAP_TYPE o){m_overlap=o;}
 
 FOM_mallocHook::FullRecord::~FullRecord(){delete[] (char*)m_h;};
 
@@ -944,7 +983,9 @@ FOM_mallocHook::ZlibWriter::ZlibWriter(std::string fileName,int compress,size_t 
   m_bs.uncompressedSize=0;
   m_bs.compressedSize=0;
   m_bs.compressionTime=0;
+  m_numBuckets=0;
 }
+
 
 FOM_mallocHook::ZlibWriter::~ZlibWriter(){
   closeFile(true);
@@ -969,27 +1010,14 @@ void FOM_mallocHook::ZlibWriter::writeRecord(const MemRecord&r){
 }
 
 void FOM_mallocHook::ZlibWriter::writeRecord(const RecordIndex&r){
-  const auto  hdr=r.getHeader();
-  // int nStacks=0;
-  // auto stIds=r.getStacks(&nStacks);
-  // size_t lenRecord=sizeof(*hdr)+sizeof(FOM_mallocHook::index_t)*nStacks;  
-  // if(lenRecord>=(m_bucketSize-m_bucketOffset)){
-  //   compressBuffer();
-  // }
-  
-  // m_nRecords++;
-  // m_nRecordsInBuffer++;
-  // if(m_maxDepth<nStacks)m_maxDepth=nStacks;
-  // ::memcpy(m_buff+m_bucketOffset,hdr,lenRecord);
-  // m_bucketOffset+=lenRecord;
-  // return true;
-  return writeRecord((const void*)hdr);
+  //const auto  hdr=r.getHeader();
+  return writeRecord((const void*)r.getHeader());
 }
  
 void FOM_mallocHook::ZlibWriter::writeRecord(const void *r){
   const auto  hdr=(FOM_mallocHook::header*)r;
   int nStacks=hdr->count;
-  auto stIds=((FOM_mallocHook::index_t*)(hdr+1));
+  //auto stIds=((FOM_mallocHook::index_t*)(hdr+1));
   size_t lenRecord=sizeof(*hdr)+sizeof(FOM_mallocHook::index_t)*nStacks;  
   if(lenRecord>=(m_bucketSize-m_bucketOffset)){
     compressBuffer();
@@ -999,17 +1027,21 @@ void FOM_mallocHook::ZlibWriter::writeRecord(const void *r){
   if(m_maxDepth<nStacks)m_maxDepth=nStacks;
   ::memcpy(m_buff+m_bucketOffset,hdr,lenRecord);
   m_bucketOffset+=lenRecord;
+  //std::cerr<<"Wrote record "<<hdr->tstart<<std::endl;
 }
  
 bool FOM_mallocHook::ZlibWriter::closeFile(bool flush){
   if(m_fileOpened){
     //std::cerr<<__PRETTY_FUNCTION__<<fsync(m_fileHandle)<<" "<<m_fileName<<" @fd= "<<m_fileHandle<<" currOffset="<<::lseek64(m_fileHandle,0,SEEK_CUR)<<" pid= "<<getpid()<<std::endl;    
     if(flush){
-      compressBuffer();
+      if(m_nRecordsInBuffer>0){
+	compressBuffer();
+      }
       if(m_stats){
 	//std::cerr<<"Nrecords= "<<m_nRecords<<" max depth="<<m_maxDepth<<std::endl;
 	m_stats->setNumRecords(m_nRecords);
 	m_stats->setStackDepthLimit(m_maxDepth);
+	m_stats->setNumBuckets(m_numBuckets);
 	m_stats->write(m_fileHandle,false);
       }
     }
@@ -1065,15 +1097,12 @@ void FOM_mallocHook::ZlibWriter::compressBuffer(){
   uLongf dstLen=m_compBuffLen;
   int ret=0;
   if((ret=compress2(m_cBuff,&dstLen,m_buff,srcLen,m_compLevel))!=Z_OK){
+    std::cerr<<"Compression Failed with "<<ret<<std::endl;
   }
   clock_gettime(CLOCK_MONOTONIC,&t2);
   m_bs.compressedSize=dstLen;
   m_bs.compressionTime=(t2.tv_sec-t1.tv_sec)*1000000000l+(t2.tv_nsec-t1.tv_nsec);
   
-// #define WRITE(X) if(::write(fd,&(X),sizeof(X))!=sizeof(X)){char buff[2048]; \
-//     throw std::ios_base::failure(std::string("ZLibWriter buffer flush failed with ")+ \
-// 				 std::string(strerror_r(errno,buff,2048)));} \
-//   //std::cerr<<"Write "<<#X<<" = "<<X<<" sizeof="<<sizeof(X)<<" pid="<<getpid()<<" fd="<<fd<<" offs="<<::lseek64(fd,0,SEEK_CUR)<<std::endl;
   WRITE(m_fileHandle,m_bs.itemsInBucket);
   WRITE(m_fileHandle,m_bs.uncompressedSize);
   WRITE(m_fileHandle,m_bs.compressedSize);
@@ -1082,8 +1111,156 @@ void FOM_mallocHook::ZlibWriter::compressBuffer(){
     char buff[2048];
     throw std::ios_base::failure(std::string(" ZlibWriter FileWriter ")+std::string(strerror_r(errno,buff,2048)));
   }
+  m_numBuckets++;
   m_nRecordsInBuffer=0;
   m_bucketOffset=0;
+  // std::cerr<<"Wrote basket with "<<m_bs.itemsInBucket<<" items, "
+  // 	   <<m_bs.compressedSize<<" bytes deflated from "
+  // 	   <<m_bs.uncompressedSize<<" in "
+  // 	   <<m_bs.compressionTime<<" ns"<<std::endl;
+}
+
+FOM_mallocHook::ZlibReader::ZlibReader(std::string fileName,uint indexPeriod):ReaderBase(fileName),m_fileHandle(-1),
+									      m_fileLength(0),
+									      m_fileBegin(0),m_fileOpened(false),
+									      m_period(indexPeriod),m_remainder(0),
+									      m_lastIndex(0),m_numRecords(0),
+									      m_lastHdr(0),m_numBuckets(0),
+									      m_uncomressedBucket(0),m_prevBucket(0)
+									      
+{
+  if(fileName.empty())throw std::ios_base::failure("File name is empty ");
+  int inpFile=open(fileName.c_str(),O_RDONLY);
+  if(inpFile==-1){
+    std::cerr<<"Input file \""<<fileName<<"\" does not exist"<<std::endl;
+    char buff[2048];
+    throw std::ios_base::failure(std::string(strerror_r(errno,buff,2048)));
+  }
+  m_fileHandle=inpFile;
+  struct stat sinp;
+  if(fstat(m_fileHandle,&sinp)==-1){
+    char buff[2048];
+    throw std::ios_base::failure(std::string(strerror_r(errno,buff,2048)));
+  }
+  if(sinp.st_size<sizeof(FOM_mallocHook::header)){
+    throw std::length_error("Corrupt file. File is too short");
+  }
+  m_fileLength=sinp.st_size;
+  m_fileOpened=true;
+  //size_t nrecords=0;
+  char buff[2050];
+  m_fileStats=new FOM_mallocHook::FileStats();
+  //std::cout << m_fileStats << " " << m_fileHandle << std::endl;
+  m_fileStats->read(m_fileHandle,false);
+  off_t hdrOff=::lseek64(m_fileHandle,0,SEEK_CUR);
+  ::lseek64(m_fileHandle,0,SEEK_SET);
+  m_fileBegin=mmap64(0,sinp.st_size,PROT_READ,MAP_PRIVATE,inpFile,0);
+  if(m_fileBegin==MAP_FAILED){
+    throw std::ios_base::failure(std::string(strerror_r(errno,buff,2048))+"failed to mmap "+fileName);        
+  }
+  std::cout<<"Starting to scan the file. File should contain "<<
+    m_fileStats->getNumRecords()<<" entries"<<std::endl;
+  char* fileEnd=(char*)m_fileBegin+sinp.st_size;
+  char* h=((char*)m_fileBegin+hdrOff);
+  m_bucketIndices.resize(m_fileStats->getNumBuckets());
+  if(m_period<1)m_period=100;
+  size_t count=0;
+  m_bucketSize=m_fileStats->getBucketSize();
+  m_uncomressedBucket=new uint8_t[m_bucketSize];
+  m_prevBucket=new uint8_t[m_bucketSize];
+  uint64_t currTimeSkew=0;
+  size_t nRecords=0;
+  while (h<fileEnd){
+    auto& cb=m_bucketIndices.at(count);
+    auto *br=(BucketStats*)h;
+    cb.bucketStart=h;
+    cb.rStart=nRecords;
+    nRecords+=br->itemsInBucket;
+    cb.rEnd=nRecords-1;
+    cb.tOffset=currTimeSkew;
+    currTimeSkew+=br->compressionTime;
+    count++;
+    h=((char*)(br+1))+br->compressedSize;
+  }
+  m_numRecords=m_bucketIndices.back().rEnd+1;
+  m_avgRecordsPerBucket=(double)m_numRecords/m_bucketIndices.size();
+  std::cout<<"Counted "<<count<<" records. Created "<<m_bucketIndices.size()
+	   <<" Bucket indices points, containing  "<< m_numRecords<<" records"<<std::endl;
+  m_currTimeSkew=0;
+  m_lastBucket=m_bucketIndices.size();
+  m_currBucket=m_lastBucket+1;
+}
+
+
+FOM_mallocHook::ZlibReader::~ZlibReader(){
+  if(m_fileOpened){
+    munmap(m_fileBegin,m_fileLength);
+    close(m_fileHandle);
+  }
+  delete[] m_uncomressedBucket;
+  delete[] m_prevBucket;
+  delete m_fileStats;
+}
+
+const FOM_mallocHook::RecordIndex FOM_mallocHook::ZlibReader::at(size_t t){
+  if(t>=m_numRecords){
+    char bu[500];
+    snprintf(bu,500,"Asked for an index larger than number of records! t=%ld size=%ld",t,m_numRecords);
+    throw std::length_error(bu);
+  }
+  size_t bucket=t/m_avgRecordsPerBucket;
+  
+  if(m_bucketIndices.at(bucket).rStart>t){
+    bucket--;
+    while(m_bucketIndices.at(bucket).rStart>t)bucket--;
+  }else if(m_bucketIndices.at(bucket).rEnd<t){
+    bucket++;
+    while(m_bucketIndices.at(bucket).rEnd<t)bucket++;
+  }
+  const auto& bucketIndex=m_bucketIndices.at(bucket);
+  BucketStats* bs=(BucketStats*)bucketIndex.bucketStart;
+  size_t buffLen=bs->uncompressedSize;
+  if(m_lastBucket==bucket){
+    std::swap(m_uncomressedBucket,m_prevBucket);
+    std::swap(m_currBucket,m_lastBucket);
+    int count=0;
+    m_recordsInCurrBuffer.resize(bs->itemsInBucket);
+    auto h=(FOM_mallocHook::header*)m_uncomressedBucket;
+    while((void*)h<(m_uncomressedBucket+buffLen)){
+      m_recordsInCurrBuffer.at(count)=FOM_mallocHook::RecordIndex(h);
+      h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count); //Record++
+      count++;
+    }
+  }else if(m_currBucket!=bucket){
+    std::swap(m_uncomressedBucket,m_prevBucket);
+    m_lastBucket=m_currBucket;
+    uncompress(m_uncomressedBucket,&buffLen,(const Bytef*)(bs+1),bs->compressedSize);
+    auto h=(FOM_mallocHook::header*)m_uncomressedBucket;
+    uint64_t ct=bucketIndex.tOffset;
+    uint count=0;
+    m_recordsInCurrBuffer.resize(bs->itemsInBucket);
+    while((void*)h<(m_uncomressedBucket+buffLen)){
+      h->tstart-=ct;
+      h->treturn-=ct;
+      h->tend-=ct;
+      m_recordsInCurrBuffer.at(count)=FOM_mallocHook::RecordIndex(h);
+      h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count); //Record++
+      count++;
+    }
+  }
+  return m_recordsInCurrBuffer.at(t-bucketIndex.rStart);
+}
+
+FOM_mallocHook::FullRecord FOM_mallocHook::ZlibReader::At(size_t t){
+  return FOM_mallocHook::FullRecord(at(t));
+}
+
+size_t FOM_mallocHook::ZlibReader::size(){
+  //return (((m_records.size()-1)*m_period)+m_remainder+1);
+  return m_numRecords;
+}
+size_t FOM_mallocHook::ZlibReader::indexedSize(){
+  return m_bucketIndices.size();
 }
 
 #endif
