@@ -20,14 +20,33 @@
 #include <sstream>
 
 size_t convert(const std::string inpName,const std::string output,unsigned long LAwindow,unsigned long DWindow,unsigned int bucketLength){
-  FOM_mallocHook::IndexingReader *rdr=new FOM_mallocHook::IndexingReader(inpName,bucketLength);
+  FOM_mallocHook::ReaderBase *rdr=0;
+  int fd=open(inpName.c_str(),O_RDONLY);
+  FOM_mallocHook::FileStats *fs=new FOM_mallocHook::FileStats();
+  fs->read(fd,false);
+  close(fd);
+  std::cout<<"processing file "<<inpName<<". Header "<<std::endl;
+  fs->print(std::cout);
+  if(fs->getCompression()==0){
+    rdr=new FOM_mallocHook::IndexingReader(inpName,bucketLength);
+  }
+#ifdef ZLIB_FOUND
+  else if((fs->getCompression()>>24)==_USE_ZLIB_COMPRESSION_){
+    rdr=new FOM_mallocHook::ZlibReader(inpName,bucketLength);
+  }
+#endif
+#ifdef BZip2_FOUND
+  else if((fs->getCompression()>>24)==_USE_BZLIB_COMPRESSION_){
+    rdr=new FOM_mallocHook::BZip2Reader(inpName,bucketLength);
+  }
+#endif
   const size_t nrecords=rdr->size();
   //configuration variables
   const size_t maxLookAheadTime=1000l*1000l*1000l*LAwindow;//in nanoseconds;
   const size_t DensityWindow=1000l*DWindow;//1000000 ns->1 ms running window
   const size_t DHalf=DensityWindow/2;
   std::multimap<size_t,std::tuple<size_t,uint64_t,uint64_t>> freeMap;//map to keep free calls key is address, tuple is pos in reader,TCorr,TOff
-  std::deque<std::pair<size_t,size_t> > freeStack;
+  //  std::deque<std::pair<size_t,size_t> > freeStack;
   uint64_t T0=0;
   uint64_t T1=0;
   uint64_t T2=0;
@@ -62,7 +81,7 @@ size_t convert(const std::string inpName,const std::string output,unsigned long 
   size_t marker=nrecords/100;
   int ticker=0;
   auto initial=rdr->at(0);
-  TStart=initial.getT0Sec()*1000000000l+initial.getT0NSec();
+  TStart=initial.getTStart();
   addrLast=initial.getAddr();
   sizeLast=initial.getSize();
   //size_t deltaOffset;
@@ -77,36 +96,37 @@ size_t convert(const std::string inpName,const std::string output,unsigned long 
   auto tstart=std::chrono::steady_clock::now();
   for(size_t i=0;i<nrecords;i++){
     auto r=rdr->at(i);
-    T0  =r.getT0Sec()*1000000000l+r.getT0NSec();
-    T1  =r.getT1Sec()*1000000000l+r.getT1NSec();
-    T2  =r.getT2Sec()*1000000000l+r.getT2NSec();
+    T0  =r.getTStart();
+    T1  =r.getTReturn();
+    T2  =r.getTEnd();
     TCorr=T0-TStart-TOffset;
     TOffset+=T2-T0;
     addr   =r.getAddr();
     size   =r.getSize();
     alloc_type=r.getAllocType();
+    stacks =r.getStacks();
     auto rmin=rdr->at(windowMin);
     int64_t tmin=TCorr-DHalf;
-    uint64_t wlT0=rmin.getT0Sec()*1000000000l+rmin.getT0NSec();
+    uint64_t wlT0=rmin.getTStart();
     int64_t wlTcorr=wlT0-TStart-wlOffset;
     while(wlTcorr<tmin){
-      wlOffset+=rmin.getT2Sec()*1000000000l+rmin.getT2NSec()-wlT0;
+      wlOffset+=rmin.getTEnd()-wlT0;
       windowMin++;
       rmin=rdr->at(windowMin);
-      wlT0=rmin.getT0Sec()*1000000000l+rmin.getT0NSec();
+      wlT0=rmin.getTStart();
       wlTcorr=wlT0-TStart-wlOffset;
     }
     if(windowMax<nrecords){
       auto rmax=rdr->at(windowMax);
       int64_t tmax=TCorr+DHalf;
-      uint64_t whT0=rmax.getT0Sec()*1000000000l+rmax.getT0NSec();
+      uint64_t whT0=rmax.getTStart();
       int64_t whTcorr=whT0-TStart-whOffset;
       while(whTcorr<tmax){
-	whOffset+=rmax.getT2Sec()*1000000000l+rmax.getT2NSec()-whT0;
+	whOffset+=rmax.getTEnd()-whT0;
 	windowMax++;
 	if(windowMax>=nrecords)break;
 	rmax=rdr->at(windowMax);
-	whT0=rmax.getT0Sec()*1000000000l+rmax.getT0NSec();
+	whT0=rmax.getTStart();
 	whTcorr=whT0-TStart-whOffset;
       }
     }
@@ -117,7 +137,6 @@ size_t convert(const std::string inpName,const std::string output,unsigned long 
       Locality=addr-addrLast;
       addrLast=addr;
     }
-    stacks =r.getStacks();
     if(alloc_type!=0){
       uint64_t TMax=TCorr+maxLookAheadTime;
       if(lastTCorr<TMax){// I don't need to check if last entry in the map is already further than lookahead buffer
@@ -127,26 +146,26 @@ size_t convert(const std::string inpName,const std::string output,unsigned long 
 	  if(currIdx<nrecords){
 	    auto ra=rdr->at(currIdx);
 	    uint64_t aoff=lastTOffset;
-	    uint64_t aT0=ra.getT0Sec()*1000000000l+ra.getT0NSec();
+	    uint64_t aT0=ra.getTStart();
 	    uint64_t aTCorr=aT0-TStart-lastTOffset;
 	    if(ra.getAllocType()==0 && ra.getAddr()==addr){
 	      LifeTime=aTCorr-TCorr;
 	      //size_t fad=ra.getAddr();
 	      lastFreeIndex=currIdx;
-	      lastTOffset=aoff+ra.getT2Sec()*1000000000l+ra.getT2NSec()-aT0;
+	      lastTOffset=aoff+ra.getTEnd()-aT0;
 	      lastTCorr=aTCorr;
 	    }else{
 	      while(aTCorr<TMax && currIdx<(nrecords-1)){//assume no leaks!
 		currIdx++;
-		aoff+=ra.getT2Sec()*1000000000l+ra.getT2NSec()-aT0;
+		aoff+=ra.getTEnd()-aT0;
 		ra=rdr->at(currIdx);
-		aT0=ra.getT0Sec()*1000000000l+ra.getT0NSec();
+		aT0=ra.getTStart();
 		aTCorr=aT0-TStart-aoff;
 		if(ra.getAllocType()==0){
 		  // size_t fad=ra.getAddr();
 		  // freeStack.emplace_back(std::make_pair(fad,currIdx));
 		  lastFreeIndex=currIdx;
-		  lastTOffset=aoff+ra.getT2Sec()*1000000000l+ra.getT2NSec()-aT0;
+		  lastTOffset=aoff+ra.getTEnd()-aT0;
 		  lastTCorr=aTCorr;
 		  if(ra.getAddr()==addr){
 		    LifeTime=aTCorr-TCorr;

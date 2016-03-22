@@ -123,7 +123,7 @@ void runRandomAllocs(size_t nRand,bool leaks){
 	  size_t loc=posDice()*(memLocations.size()-1);
 	  v=memLocations[loc];
 	  memLocations.erase(memLocations.begin()+loc);
-	  printf("%s %x\n",opName[aType].c_str(),v);
+	  printf("%ld %s %x\n",t,opName[aType].c_str(),v);
 	  free(v);
 	}else{
 	  t--;
@@ -136,7 +136,7 @@ void runRandomAllocs(size_t nRand,bool leaks){
 	s=1<<sizeDice();
 	v=(char*)malloc(s);
 	memLocations.push_back(v);
-	printf("%s %x size= %d\n",opName[aType].c_str(),v,s);	
+	printf("%ld %s %x size= %d\n",t,opName[aType].c_str(),v,s);	
 	break;
       }
     case 2://realloc
@@ -148,7 +148,7 @@ void runRandomAllocs(size_t nRand,bool leaks){
 	  s=1<<sizeDice();
 	  char *n=(char*)realloc(v,s);
 	  memLocations.push_back(n);
-	  printf("%s old=%x new=%x size= %d\n",opName[aType].c_str(),v,n,s);
+	  printf("%ld %s old=%x new=%x size= %d\n",t,opName[aType].c_str(),v,n,s);
 	}else{
 	  t--;
 	  continue;
@@ -160,7 +160,7 @@ void runRandomAllocs(size_t nRand,bool leaks){
 	s=1<<sizeDice();
 	v=(char*)malloc(s);
 	memLocations.push_back(v);
-	printf("%s %x size= %d\n",opName[aType].c_str(),v,s);	
+	printf("%ld %s %x size= %d\n",t,opName[aType].c_str(),v,s);	
 	break;
       }
     default:

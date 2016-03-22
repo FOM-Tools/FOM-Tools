@@ -34,10 +34,17 @@
 #include "config-FOMTools.h"
 #ifdef ZLIB_FOUND
 #include "zlib.h"
+#define _USE_ZLIB_COMPRESSION_ 1
 #endif
 #ifdef BZip2_FOUND
 #include "bzlib.h"
+#define _USE_BZLIB_COMPRESSION_ 2
 #endif
+#ifdef LibLZMA_FOUND
+//#include libLZMA
+#define _USE_LZMA_COMPRESSION_ 3
+#endif
+
 
 namespace FOM_mallocHook{
   typedef unsigned int index_t;
@@ -60,6 +67,18 @@ namespace FOM_mallocHook{
     uint64_t compressionTime;
   } __attribute__((packed));
 
+  // template <typename T>
+  // class CircularQueue{
+  // public:
+  //   CircularQueue()=delete;
+  //   CircularQueue(size_t size);
+  //   T& at(size_t t);
+  //   T& pop_back();
+  //   T& pop_front();
+  //   void push_back(T&&);
+  //   void push_front(T&&);
+  //   T& swapAt(t,T&);//swap with t and return t;
+  // }
   class MemRecord{
   public:
     enum OVERLAP_TYPE{Undefined=0,//Overlap is meaningless (i.e when reading from file)
@@ -229,7 +248,7 @@ namespace FOM_mallocHook{
  #ifdef ZLIB_FOUND
   class ZlibReader:public FOM_mallocHook::ReaderBase{
   public:
-    ZlibReader(std::string fileName,unsigned int indexPeriod=1);
+    ZlibReader(std::string fileName,unsigned int nUncompBuckets=100);
     ZlibReader()=delete;
     ZlibReader(const FOM_mallocHook::ZlibReader&)=delete;
     ~ZlibReader();
@@ -246,24 +265,36 @@ namespace FOM_mallocHook{
       size_t rEnd;//record end
       uint64_t tOffset;// tOffset at the start of the bucket
     };
+    class BuffRec{
+    public:
+      BuffRec(size_t bi,uint8_t* b,size_t avgNrecords):bucketIndex(bi),bucketBuff(b){records=new std::vector<RecordIndex>(avgNrecords);};
+      size_t bucketIndex;
+      uint8_t *bucketBuff;
+      std::vector<RecordIndex> *records;
+      friend void swap( BuffRec&a, BuffRec&b){
+	std::swap(a.bucketIndex,b.bucketIndex);
+	std::swap(a.bucketBuff,b.bucketBuff);
+	std::swap(a.records,b.records);
+      }
+    };
     std::vector<BucketIndex> m_bucketIndices;
     RecordIndex& seek(const RecordIndex& start, uint offset);
     int m_fileHandle;
     size_t m_fileLength;
     void *m_fileBegin;
-    std::vector<RecordIndex> m_recordsInCurrBuffer;
+    std::vector<RecordIndex> *m_recordsInCurrBuffer;
     bool m_fileOpened;
-    uint m_period;
-    uint m_remainder;
     size_t m_lastIndex;
     size_t m_numRecords;
     size_t m_numBuckets;
     size_t m_currBucket,m_lastBucket;
-    size_t m_currTimeSkew;
+    //size_t m_currTimeSkew;
     size_t m_bucketSize;
     double m_avgRecordsPerBucket;
-    const FOM_mallocHook::header* m_lastHdr;    
-    uint8_t *m_uncomressedBucket,*m_prevBucket;
+    std::vector<BuffRec>  m_buffers;
+    const FOM_mallocHook::header* m_lastHdr;
+    //uint8_t *m_uncomressedBucket,*m_prevBucket;
+    
   };
 #endif
 

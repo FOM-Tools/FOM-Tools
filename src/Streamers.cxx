@@ -1120,13 +1120,12 @@ void FOM_mallocHook::ZlibWriter::compressBuffer(){
   // 	   <<m_bs.compressionTime<<" ns"<<std::endl;
 }
 
-FOM_mallocHook::ZlibReader::ZlibReader(std::string fileName,uint indexPeriod):ReaderBase(fileName),m_fileHandle(-1),
-									      m_fileLength(0),
-									      m_fileBegin(0),m_fileOpened(false),
-									      m_period(indexPeriod),m_remainder(0),
-									      m_lastIndex(0),m_numRecords(0),
-									      m_lastHdr(0),m_numBuckets(0),
-									      m_uncomressedBucket(0),m_prevBucket(0)
+FOM_mallocHook::ZlibReader::ZlibReader(std::string fileName,uint nUncompBuckets):ReaderBase(fileName),m_fileHandle(-1),
+										 m_fileLength(0),
+										 m_fileBegin(0),m_fileOpened(false),
+										 m_lastIndex(0),m_numRecords(0),
+										 m_lastHdr(0),m_numBuckets(0)//,
+										 //m_uncomressedBucket(0),m_prevBucket(0)
 									      
 {
   if(fileName.empty())throw std::ios_base::failure("File name is empty ");
@@ -1163,11 +1162,10 @@ FOM_mallocHook::ZlibReader::ZlibReader(std::string fileName,uint indexPeriod):Re
   char* fileEnd=(char*)m_fileBegin+sinp.st_size;
   char* h=((char*)m_fileBegin+hdrOff);
   m_bucketIndices.resize(m_fileStats->getNumBuckets());
-  if(m_period<1)m_period=100;
   size_t count=0;
   m_bucketSize=m_fileStats->getBucketSize();
-  m_uncomressedBucket=new uint8_t[m_bucketSize];
-  m_prevBucket=new uint8_t[m_bucketSize];
+  //m_uncomressedBucket=new uint8_t[m_bucketSize];
+  //m_prevBucket=new uint8_t[m_bucketSize];
   uint64_t currTimeSkew=0;
   size_t nRecords=0;
   while (h<fileEnd){
@@ -1184,11 +1182,15 @@ FOM_mallocHook::ZlibReader::ZlibReader(std::string fileName,uint indexPeriod):Re
   }
   m_numRecords=m_bucketIndices.back().rEnd+1;
   m_avgRecordsPerBucket=(double)m_numRecords/m_bucketIndices.size();
+  m_buffers.reserve(nUncompBuckets);
   std::cout<<"Counted "<<count<<" records. Created "<<m_bucketIndices.size()
 	   <<" Bucket indices points, containing  "<< m_numRecords<<" records"<<std::endl;
-  m_currTimeSkew=0;
+  //m_currTimeSkew=0;
   m_lastBucket=m_bucketIndices.size();
   m_currBucket=m_lastBucket+1;
+  for(size_t t=0;t<nUncompBuckets;t++){
+    m_buffers.emplace_back(m_lastBucket,new uint8_t[m_bucketSize],m_avgRecordsPerBucket+1);
+  }
 }
 
 
@@ -1197,9 +1199,12 @@ FOM_mallocHook::ZlibReader::~ZlibReader(){
     munmap(m_fileBegin,m_fileLength);
     close(m_fileHandle);
   }
-  delete[] m_uncomressedBucket;
-  delete[] m_prevBucket;
+  //delete[] m_uncomressedBucket;
+  //delete[] m_prevBucket;
   delete m_fileStats;
+  for(auto &i:m_buffers){
+    delete[] i.bucketBuff;
+  }
 }
 
 const FOM_mallocHook::RecordIndex FOM_mallocHook::ZlibReader::at(size_t t){
@@ -1209,7 +1214,6 @@ const FOM_mallocHook::RecordIndex FOM_mallocHook::ZlibReader::at(size_t t){
     throw std::length_error(bu);
   }
   size_t bucket=t/m_avgRecordsPerBucket;
-  
   if(m_bucketIndices.at(bucket).rStart>t){
     bucket--;
     while(m_bucketIndices.at(bucket).rStart>t)bucket--;
@@ -1218,37 +1222,41 @@ const FOM_mallocHook::RecordIndex FOM_mallocHook::ZlibReader::at(size_t t){
     while(m_bucketIndices.at(bucket).rEnd<t)bucket++;
   }
   const auto& bucketIndex=m_bucketIndices.at(bucket);
-  BucketStats* bs=(BucketStats*)bucketIndex.bucketStart;
-  size_t buffLen=bs->uncompressedSize;
-  if(m_lastBucket==bucket){
-    std::swap(m_uncomressedBucket,m_prevBucket);
-    std::swap(m_currBucket,m_lastBucket);
-    int count=0;
-    m_recordsInCurrBuffer.resize(bs->itemsInBucket);
-    auto h=(FOM_mallocHook::header*)m_uncomressedBucket;
-    while((void*)h<(m_uncomressedBucket+buffLen)){
-      m_recordsInCurrBuffer.at(count)=FOM_mallocHook::RecordIndex(h);
-      h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count); //Record++
-      count++;
+  if(bucket==m_currBucket) return m_recordsInCurrBuffer->at(t-bucketIndex.rStart);
+  auto oldB=std::lower_bound(m_buffers.begin(),m_buffers.end(),m_buffers.back()
+			     ,[bucket](const BuffRec& a,const BuffRec&b )->bool{return a.bucketIndex<bucket;});
+  if(oldB->bucketIndex==bucket){
+    m_currBucket=bucket;
+    m_recordsInCurrBuffer=oldB->records;
+    return m_recordsInCurrBuffer->at(t-bucketIndex.rStart);
+  }else{
+    BucketStats* bs=(BucketStats*)bucketIndex.bucketStart;
+    size_t buffLen=bs->uncompressedSize;
+    BuffRec* cb=0;
+    if((m_currBucket-m_buffers.front().bucketIndex)<m_buffers.back().bucketIndex-m_currBucket){//front is closer use back
+      cb=&(m_buffers.back());
+    }else{//back is closer, use front
+      cb=&(m_buffers.front());
     }
-  }else if(m_currBucket!=bucket){
-    std::swap(m_uncomressedBucket,m_prevBucket);
-    m_lastBucket=m_currBucket;
-    uncompress(m_uncomressedBucket,&buffLen,(const Bytef*)(bs+1),bs->compressedSize);
-    auto h=(FOM_mallocHook::header*)m_uncomressedBucket;
+    cb->bucketIndex=bucket;
+    uncompress(cb->bucketBuff,&buffLen,(const Bytef*)(bs+1),bs->compressedSize);
+    auto h=(FOM_mallocHook::header*)cb->bucketBuff;
     uint64_t ct=bucketIndex.tOffset;
     uint count=0;
-    m_recordsInCurrBuffer.resize(bs->itemsInBucket);
-    while((void*)h<(m_uncomressedBucket+buffLen)){
+    m_recordsInCurrBuffer=cb->records;
+    m_recordsInCurrBuffer->resize(bs->itemsInBucket);
+    while((void*)h<(cb->bucketBuff+buffLen)){
       h->tstart-=ct;
       h->treturn-=ct;
       h->tend-=ct;
-      m_recordsInCurrBuffer.at(count)=FOM_mallocHook::RecordIndex(h);
+      m_recordsInCurrBuffer->at(count)=FOM_mallocHook::RecordIndex(h);
       h=(FOM_mallocHook::header*)(((FOM_mallocHook::index_t*)(h+1))+h->count); //Record++
       count++;
     }
+    std::sort(m_buffers.begin(),m_buffers.end(),[](const BuffRec& a,const BuffRec& b)->bool{return a.bucketIndex<b.bucketIndex;});
   }
-  return m_recordsInCurrBuffer.at(t-bucketIndex.rStart);
+  return m_recordsInCurrBuffer->at(t-bucketIndex.rStart);
+
 }
 
 FOM_mallocHook::FullRecord FOM_mallocHook::ZlibReader::At(size_t t){

@@ -46,6 +46,8 @@ find_package(ZLIB)
 #find_package(LibLZMA)
 #find_package(BZip2)
 CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/config-FOMTools.h.in ${PROJECT_BINARY_DIR}/config-FOMTools.h)
+install (FILES ${PROJECT_BINARY_DIR}/config-FOMTools.h DESTINATION ${CMAKE_INSTALL_PREFIX}/include/FOMTools)
+
 include_directories ("${PROJECT_SOURCE_DIR}/" )
 include_directories(${PYTHON_INCLUDE_DIRS})
 if(ZLIB_FOUND)
@@ -76,6 +78,7 @@ endif()
 
 install (DIRECTORY FOMTools/ DESTINATION include/FOMTools
            PATTERN "*.hpp")
+
 
 #--- python interface and tools ------------------------------------------------
 python_add_module(PageStatusChecker src/PageStatusChecker.cxx)

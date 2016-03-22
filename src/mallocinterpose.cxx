@@ -434,14 +434,14 @@ FOM_mallocHook::WriterBase* getWriter(){
       break;
     }
 #ifdef ZLIB_FOUND
-  case(1):
+  case(_USE_ZLIB_COMPRESSION_):
     {
       w=new FOM_mallocHook::ZlibWriter(fileN,compress,bucketSize);
       break;
     }
 #endif
 #ifdef BZip2_FOUND    
-  case(2):
+  case(_USE_BZLIB_COMPRESSION_):
     {
       w=new FOM_mallocHook::BZip2Writer(fileN,compress,bucketSize);
       break;
@@ -449,7 +449,7 @@ FOM_mallocHook::WriterBase* getWriter(){
 #endif
 
 #ifdef LibLZMA_FOUND    
-  case(3):
+  case(_USE_LZMA_COMPRESSION_):
     {
       w=new FOM_mallocHook::LZMAWriter(fileN,compress,bucketSize);
       break;
