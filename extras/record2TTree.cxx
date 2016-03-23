@@ -19,7 +19,9 @@
 #include <tuple>
 #include <sstream>
 
-struct freeRecord{
+class FreeRecord{
+public:
+  FreeRecord(size_t f,uint64_t tc,uint64_t to):filePos(f),TCorr(tc),TOff(to){};
   size_t filePos;
   uint64_t TCorr;
   uint64_t TOff;
@@ -55,7 +57,7 @@ size_t convert(const std::string inpName,const std::string output,
   const size_t maxLookAheadTime=1000l*1000l*1000l*LAwindow;//in nanoseconds;
   const size_t DensityWindow=1000l*DWindow;//1000000 ns->1 ms running window
   const size_t DHalf=DensityWindow/2;
-  std::multimap<size_t,std::tuple<size_t,uint64_t,uint64_t>> freeMap;//map to keep free calls key is address, tuple is pos in reader,TCorr,TOff
+  std::multimap<size_t,FreeRecord> freeMap;//map to keep free calls key is address, tuple is pos in reader,TCorr,TOff
   //  std::deque<std::pair<size_t,size_t> > freeStack;
   uint64_t T0=0;
   uint64_t T1=0;
@@ -181,7 +183,7 @@ size_t convert(const std::string inpName,const std::string output,
 		    LifeTime=aTCorr-TCorr;
 		    break;
 		  }
-		  freeMap.emplace(std::make_pair(addr,std::make_tuple(currIdx,aTCorr,aoff)));
+		  freeMap.emplace(std::make_pair(addr,FreeRecord(currIdx,aTCorr,aoff)));
 		}
 	      }
 	      if(aTCorr>=TMax){
@@ -196,7 +198,7 @@ size_t convert(const std::string inpName,const std::string output,
 	  //     break;
 	  //   }
 	  // }
-	  LifeTime=std::get<1>(mapRange.first->second)-TCorr;
+	  LifeTime=mapRange.first->second.TCorr-TCorr;
 	  freeMap.erase(mapRange.first);
 	}
       }else{
