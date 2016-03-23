@@ -292,7 +292,8 @@ namespace FOM_mallocHook{
     size_t m_bucketSize;
     double m_avgRecordsPerBucket;
     std::vector<BuffRec>  m_buffers;
-    const FOM_mallocHook::header* m_lastHdr;
+    size_t m_inflateCount;
+    //const FOM_mallocHook::header* m_lastHdr;
     //uint8_t *m_uncomressedBucket,*m_prevBucket;
     
   };

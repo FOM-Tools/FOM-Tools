@@ -1124,7 +1124,7 @@ FOM_mallocHook::ZlibReader::ZlibReader(std::string fileName,uint nUncompBuckets)
 										 m_fileLength(0),
 										 m_fileBegin(0),m_fileOpened(false),
 										 m_lastIndex(0),m_numRecords(0),
-										 m_lastHdr(0),m_numBuckets(0)//,
+										 m_inflateCount(0),m_numBuckets(0)//,
 										 //m_uncomressedBucket(0),m_prevBucket(0)
 									      
 {
@@ -1205,6 +1205,7 @@ FOM_mallocHook::ZlibReader::~ZlibReader(){
   for(auto &i:m_buffers){
     delete[] i.bucketBuff;
   }
+  std::cout<<"Inflated "<<m_inflateCount<<" buffers "<<std::endl;
 }
 
 const FOM_mallocHook::RecordIndex FOM_mallocHook::ZlibReader::at(size_t t){
@@ -1239,7 +1240,9 @@ const FOM_mallocHook::RecordIndex FOM_mallocHook::ZlibReader::at(size_t t){
       cb=&(m_buffers.front());
     }
     cb->bucketIndex=bucket;
+    m_currBucket=bucket;
     uncompress(cb->bucketBuff,&buffLen,(const Bytef*)(bs+1),bs->compressedSize);
+    m_inflateCount++;
     auto h=(FOM_mallocHook::header*)cb->bucketBuff;
     uint64_t ct=bucketIndex.tOffset;
     uint count=0;

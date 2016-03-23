@@ -19,7 +19,17 @@
 #include <tuple>
 #include <sstream>
 
-size_t convert(const std::string inpName,const std::string output,unsigned long LAwindow,unsigned long DWindow,unsigned int bucketLength){
+struct freeRecord{
+  size_t filePos;
+  uint64_t TCorr;
+  uint64_t TOff;
+};
+
+size_t convert(const std::string inpName,const std::string output,
+	       unsigned long LAwindow,unsigned long DWindow,
+	       unsigned int bucketLength,
+	       size_t mapLen
+	       ){
   FOM_mallocHook::ReaderBase *rdr=0;
   int fd=open(inpName.c_str(),O_RDONLY);
   FOM_mallocHook::FileStats *fs=new FOM_mallocHook::FileStats();
@@ -155,7 +165,7 @@ size_t convert(const std::string inpName,const std::string output,unsigned long 
 	      lastTOffset=aoff+ra.getTEnd()-aT0;
 	      lastTCorr=aTCorr;
 	    }else{
-	      while(aTCorr<TMax && currIdx<(nrecords-1)){//assume no leaks!
+	      while((aTCorr<TMax ||(freeMap.size()<mapLen)) && currIdx<(nrecords-1)){
 		currIdx++;
 		aoff+=ra.getTEnd()-aT0;
 		ra=rdr->at(currIdx);
@@ -223,6 +233,7 @@ int main(int argc,char* argv[]){
   std::string outName("");
   unsigned long lawidth(200),DWidth(1000);
   unsigned int bucketLen(100);
+  size_t mapLen(100000000);
   //struct stat sinp;
   int c;
   while (1) {
@@ -234,12 +245,14 @@ int main(int argc,char* argv[]){
       {"look-ahead-width", 1, 0, 'l'},
       {"density-width", 1, 0, 'd'},
       {"bucket-size", 1, 0, 'b'},
+      {"map-length", 1, 0, 'm'},
       {0, 0, 0, 0}
     };
-    c = getopt_long(argc, argv, "hi:o:l:d:b:",
+    c = getopt_long(argc, argv, "hi:o:l:d:b:m:",
 		    long_options, &option_index);
-    if (c == -1)
+    if (c == -1){
       break;
+    }
     switch (c) {
     case 'h':
       printUsage(argv[0]);
@@ -266,6 +279,11 @@ int main(int argc,char* argv[]){
     case 'b':  {
       std::stringstream iss(optarg);
       iss>>bucketLen;
+      break;
+    }
+    case 'm':  {
+      std::stringstream iss(optarg);
+      iss>>mapLen;
       break;
     }
     default:
@@ -299,7 +317,7 @@ int main(int argc,char* argv[]){
     std::cout<<"Using outputfile "<<outName<<std::endl;
   }
   auto tstart=std::chrono::steady_clock::now();
-  size_t nrecords=convert(inpName,outName,lawidth,DWidth,bucketLen);
+  size_t nrecords=convert(inpName,outName,lawidth,DWidth,bucketLen,mapLen);
   printf("Processing of %ld records took %10.3fs\n",nrecords,std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-tstart).count()/1000.);
   return 0;
 }

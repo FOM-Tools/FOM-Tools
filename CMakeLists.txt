@@ -54,7 +54,8 @@ if(ZLIB_FOUND)
 include_directories ("${ZLIB_INCLUDE_DIRS}" )
 endif()
 #--- target for Doxygen documentation ------------------------------------------
-include(cmake/FOMToolsDoxygen.cmake)
+# no Doxygen yet
+#include(cmake/FOMToolsDoxygen.cmake)
 
 #--- add version files ---------------------------------------------------------
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/FOMToolsVersion.h
@@ -72,6 +73,7 @@ option(BUILD_TESTS "Build test example" OFF)
 
 if(BUILD_TESTS)
 #--- enable unit testing capabilities ------------------------------------------
+# Unit testing is complicated. needs human intervention
 #include(CTest)
 add_subdirectory(test)
 endif()
