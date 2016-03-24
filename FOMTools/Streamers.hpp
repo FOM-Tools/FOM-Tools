@@ -79,6 +79,7 @@ namespace FOM_mallocHook{
   //   void push_front(T&&);
   //   T& swapAt(t,T&);//swap with t and return t;
   // }
+  class RecordIndex;
   class MemRecord{
   public:
     enum OVERLAP_TYPE{Undefined=0,//Overlap is meaningless (i.e when reading from file)
@@ -89,6 +90,7 @@ namespace FOM_mallocHook{
 		      Exact=5 //malloc range matches the scanned region (rs=ms<me=re)
     };
     MemRecord(void*);
+    MemRecord(const RecordIndex&);
     ~MemRecord();
     uintptr_t getFirstPage() const;
     uintptr_t getLastPage() const ;
@@ -98,7 +100,7 @@ namespace FOM_mallocHook{
     uintptr_t getAddr() const;
     size_t getSize() const;
     char getAllocType() const;
-    const index_t* const getStacks(int *count) const;
+    const index_t* const getStacks(size_t *count) const;
     std::vector<index_t> getStacks() const;
     const FOM_mallocHook::header* const getHeader() const;
     OVERLAP_TYPE getOverlap() const;
@@ -124,7 +126,7 @@ namespace FOM_mallocHook{
     uint64_t getTEnd()const;
     size_t getSize() const;
     char getAllocType() const;
-    const index_t* const getStacks(int *count) const;
+    const index_t* const getStacks(size_t *count) const;
     std::vector<index_t> getStacks() const;
     const FOM_mallocHook::header* const getHeader() const;
   private:
@@ -147,7 +149,7 @@ namespace FOM_mallocHook{
     uint64_t getTEnd()const;
     size_t getSize() const;
     char getAllocType() const;
-    const index_t* const getStacks(int *count) const;
+    const index_t* const getStacks(size_t *count) const;
     std::vector<index_t> getStacks() const;
     const FOM_mallocHook::header* const getHeader() const;
   private:
@@ -171,7 +173,7 @@ namespace FOM_mallocHook{
     uintptr_t getAddr() const;
     size_t getSize() const;
     char getAllocType() const;
-    const index_t* const getStacks(int *count) const;
+    const index_t* const getStacks(size_t *count) const;
     std::vector<index_t> getStacks() const;
     const FOM_mallocHook::header* const getHeader() const;
     void* getBuffer();
@@ -197,22 +199,23 @@ namespace FOM_mallocHook{
     std::string m_fileName;
   };
 
-  class Reader{
+  class Reader:public FOM_mallocHook::ReaderBase{
   public:
     Reader(std::string fileName);
     Reader()=delete;
     ~Reader();
     //const MemRecord&  readNext();
-    const MemRecord&  at(size_t);
-    size_t size();
-    const FOM_mallocHook::FileStats* getFileStats() const;
+    const RecordIndex at(size_t) final;
+    FOM_mallocHook::FullRecord At(size_t)final;    
+    size_t size() final;
+    //const FOM_mallocHook::FileStats* getFileStats() const;
   private:
     int m_fileHandle;
     size_t m_fileLength;
     std::string m_fileName;
     void *m_fileBegin;
     //MemRecord m_curr;
-    std::vector<MemRecord> m_records;
+    std::vector<RecordIndex> m_records;
     FOM_mallocHook::FileStats* m_fileStats;
     bool m_fileOpened; 
   };
@@ -248,7 +251,7 @@ namespace FOM_mallocHook{
  #ifdef ZLIB_FOUND
   class ZlibReader:public FOM_mallocHook::ReaderBase{
   public:
-    ZlibReader(std::string fileName,unsigned int nUncompBuckets=100);
+    ZlibReader(std::string fileName,unsigned int nUncompBuckets=3);
     ZlibReader()=delete;
     ZlibReader(const FOM_mallocHook::ZlibReader&)=delete;
     ~ZlibReader();
@@ -267,10 +270,12 @@ namespace FOM_mallocHook{
     };
     class BuffRec{
     public:
-      BuffRec(size_t bi,uint8_t* b,size_t avgNrecords):bucketIndex(bi),bucketBuff(b){records=new std::vector<RecordIndex>(avgNrecords);};
+      BuffRec(size_t bi,uint8_t* b,size_t avgNrecords):bucketIndex(bi),bucketBuff(b),lastUse(0){records=new std::vector<RecordIndex>(avgNrecords);};
       size_t bucketIndex;
       uint8_t *bucketBuff;
+      uint64_t lastUse;
       std::vector<RecordIndex> *records;
+      
       friend void swap( BuffRec&a, BuffRec&b){
 	std::swap(a.bucketIndex,b.bucketIndex);
 	std::swap(a.bucketBuff,b.bucketBuff);

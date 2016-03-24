@@ -103,29 +103,33 @@ int main(int argc,char* argv[]){
   size_t totBytes=0;
   struct timespec tstart,tend;
   int rc=clock_gettime(CLOCK_MONOTONIC,&tstart);
-  FOM_mallocHook::Reader *rdr=0;
-  
-  try{
-    rdr=new FOM_mallocHook::Reader(inpName);
-  }catch(std::exception &ex){
-    fprintf(stderr,"Caught exception %s\n",ex.what());
-    exit(EXIT_FAILURE);
-  }
-  if(rdr){
-    auto fs=rdr->getFileStats();
-    fs->print();
-    std::cout<<"Commandline was: "<<std::endl;
-    int i=0;
-    for(auto &c:fs->getCmdLine()){
-      std::cout<<" argv["<<i<<"] = "<<c<<std::endl;
-      i++;
-    }
-    std::cout<<"NumRecords= "<<fs->getNumRecords()<<std::endl;
-    std::cout<<"Start time = "<<fs->getStartTime()<<std::endl;
-    std::cout<<"Max stack depth= "<<fs->getMaxStackLen()<<std::endl;
-    delete rdr;
-    rdr=0;
-  }
+  FOM_mallocHook::ReaderBase *rdr=0;
+  int inpFile=open(inpName.c_str(),O_RDONLY);
+  auto fs=new FOM_mallocHook::FileStats();
+  fs->read(inpFile,false);
+  close(inpFile);
+  fs->print(std::cout);
+  // try{
+  //   rdr=new FOM_mallocHook::Reader(inpName);
+  // }catch(std::exception &ex){
+  //   fprintf(stderr,"Caught exception %s\n",ex.what());
+  //   exit(EXIT_FAILURE);
+  // }
+  // if(rdr){
+  //   auto fs=rdr->getFileStats();
+  //   fs->print();
+  //   std::cout<<"Commandline was: "<<std::endl;
+  //   int i=0;
+  //   for(auto &c:fs->getCmdLine()){
+  //     std::cout<<" argv["<<i<<"] = "<<c<<std::endl;
+  //     i++;
+  //   }
+  //   std::cout<<"NumRecords= "<<fs->getNumRecords()<<std::endl;
+  //   std::cout<<"Start time = "<<fs->getStartTime()<<std::endl;
+  //   std::cout<<"Max stack depth= "<<fs->getMaxStackLen()<<std::endl;
+  //   delete rdr;
+  //   rdr=0;
+  // }
   //munmap(dataAddr,sinp.st_size);
   return 0;
 }

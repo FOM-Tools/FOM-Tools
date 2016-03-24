@@ -69,7 +69,7 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/COPYING
 
 #--- project specific subdirectories -------------------------------------------
 add_subdirectory(src)
-option(BUILD_TESTS "Build test example" OFF)
+option(BUILD_TESTS "Build test examples" ON)
 
 if(BUILD_TESTS)
 #--- enable unit testing capabilities ------------------------------------------
@@ -94,13 +94,14 @@ install(FILES Monitor.py
   postprocessing/PlotHistograms.py
   postprocessing/Postprocessing.py
   postprocessing/Preprocessor.py
+  extras/runMallocHook.sh
   PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE 
   GROUP_READ GROUP_EXECUTE 
   WORLD_READ WORLD_EXECUTE
   DESTINATION "bin")
 file(WRITE __init__.py "#FOMTools init file")
 install(FILES __init__.py DESTINATION "python/FOMTools" )
-
+#install(FILES extras/runMallocHook.sh DESTINATION  
 #--- prepare cmake package -----------------------------------------------------
 include(CMakePackageConfigHelpers)
 include(GenerateExportHeader)

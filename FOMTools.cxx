@@ -307,7 +307,7 @@ static PyObject* PyGetNextFromSteam(PyObject *self, PyObject * args){
     Py_INCREF(Py_None);
     return Py_None;  
   }
-  int count=0;
+  size_t count=0;
   auto stackArray=r.getStacks(&count);
   PyObject* stackList=PyTuple_New(count);
   for(int i=0;i<count;i++){
@@ -350,7 +350,7 @@ static PyObject* PyRecordAt(PyObject *self, PyObject * args){
     Py_INCREF(Py_None);
     return Py_None;  
   }
-  int count=0;
+  size_t count=0;
   auto stackArray=r.getStacks(&count);
   PyObject* stackList=PyTuple_New(count);
   for(int i=0;i<count;i++){

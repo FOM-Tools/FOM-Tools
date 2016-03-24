@@ -37,6 +37,7 @@
 #include <cstdint>
 #include <iostream>
 #include "FOMTools/Streamers.hpp"
+
 #define handle_error(msg)                              \
   do { perror(msg); exit(EXIT_FAILURE); } while (0)
 static const off64_t pageMask=(sysconf(_SC_PAGE_SIZE) - 1);
@@ -125,117 +126,123 @@ int main(int argc,char* argv[]){
   if(lstat(inpName.c_str(),&st)){
     std::cerr<<"Can't stat input file \""<<inpName<<"\". Check that file exists and readeable"<<std::endl;
   }
-  if(st.st_size > (7ul<<30)){//"file is too big, just use indexer to access it"
-    std::cout<<"File is too big ("<<st.st_size<<" B) using indexer ( "<<(7ul<<30) <<" )"<<std::endl;
-    int rc=clock_gettime(CLOCK_MONOTONIC,&tstart);
-    FOM_mallocHook::IndexingReader *r=0;
-    try{
-      r=new FOM_mallocHook::IndexingReader(inpName);
-      r->getFileStats()->print();
-      int rc=clock_gettime(CLOCK_MONOTONIC,&tend);
-      long ds=(tend.tv_sec-tstart.tv_sec);
-      long dns=(tend.tv_nsec-tstart.tv_nsec);
-      if(dns<0){
-	ds--;
-	dns+=1000000000;
-      }
-      dns=dns/1000000.;
-      printf("Scanning file %s took %lu.%03lu seconds\n",inpName.c_str(),ds,dns);
-      
-    }catch(std::exception &ex){
-      fprintf(stderr,"Caught exception %s\n",ex.what());
-      exit(EXIT_FAILURE);
-    }
-    size_t nRecords=r->size();
-    printf("Starting conversion of %ld records, (%ld x %d B)\n",nRecords,r->indexedSize(),sizeof(FOM_mallocHook::RecordIndex));
-    for(size_t t=0;t<nRecords;t++){
-      auto memRec=r->at(t);
-      auto hdr=memRec.getHeader();
-      buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,
-			"%lld %d 0x%lx %ld %lld",
-			hdr->tstart,
-			hdr->allocType,
-			hdr->addr, hdr->size, hdr->treturn);
-      int nStacks=0;
-      auto stIds=memRec.getStacks(&nStacks);
-      for(int i=0;i<nStacks;i++){
-	buffPos+=snprintf(buff+buffPos,maxBuf-buffPos," %u",*(stIds+i));
-      }
-      buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,"\n");
-      writtenBytes=write(outFile,buff,buffPos);
-      if(writtenBytes!=buffPos){
-	if(writtenBytes==-1){
-	  handle_error("write failed");
+  int inpFile=open(inpName.c_str(),O_RDONLY);
+  auto fs=new FOM_mallocHook::FileStats();
+  fs->read(inpFile,false);
+  close(inpFile);
+  FOM_mallocHook::ReaderBase* r=0;
+  int compressionMode=((fs->getCompression())>>24); //higher 8 bits for compression mode
+  switch(compressionMode){
+  case(0):
+    {
+      if(fs->getNumRecords()>500000000){//4G
+	unsigned int indexSize=(fs->getNumRecords()+499999999)/500000000;
+	try{
+	  r=new FOM_mallocHook::IndexingReader(inpName,indexSize);
+	}catch(const std::exception &ex){
+	  fprintf(stderr,"Caught exception %s\n",ex.what());
+	  exit(EXIT_FAILURE);
 	}
-	fprintf(stderr,"Buffer written partially\n");
+      }else{
+	try{
+	  r=new FOM_mallocHook::Reader(inpName);
+	}catch(const std::exception &ex){
+	  fprintf(stderr,"Caught exception %s\n",ex.what());
+	  exit(EXIT_FAILURE);
+	}
+      }
+      break;
+    }
+#ifdef ZLIB_FOUND
+  case(_USE_ZLIB_COMPRESSION_):
+    {
+      try{
+	r=new FOM_mallocHook::ZlibReader(inpName);
+      }catch(const std::exception &ex){
+	fprintf(stderr,"Caught exception %s\n",ex.what());
 	exit(EXIT_FAILURE);
       }
-      totBytes+=writtenBytes;
-      buffPos=0;
-      nrecords++;
+      break;
     }
-    rc=clock_gettime(CLOCK_MONOTONIC,&tend);
-    delete r;
-    long ds=(tend.tv_sec-tstart.tv_sec);
-    long dns=(tend.tv_nsec-tstart.tv_nsec);
-    if(dns<0){
-      ds--;
-      dns+=1000000000;
-    }
-    dns=dns/1000000.;
-    printf("Read %ld records and written %lu bytes to %s in %lu.%03lu seconds\n",nrecords,totBytes,outName.c_str(),ds,dns);
-  }else{
-    std::cout<<"File is will be buffered in memory ("<<st.st_size<<" B <"<<(7ul<<30) <<" )"<<std::endl;
-    int rc=clock_gettime(CLOCK_MONOTONIC,&tstart);
-    FOM_mallocHook::Reader *rdr=0;
-    try{
-      rdr=new FOM_mallocHook::Reader(inpName);
-    }catch(std::exception &ex){
-      fprintf(stderr,"Caught exception %s\n",ex.what());
-      exit(EXIT_FAILURE);
-    }
-    size_t nRecords=rdr->size();
-    printf("Starting conversion\n");
-    for(size_t t=0;t<nRecords;t++){
-      auto& memRec=rdr->at(t);
-      auto hdr=memRec.getHeader();
-      buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,
-			"%lld %d 0x%lx %ld %ld",
-			hdr->tstart,
-			hdr->allocType,
-			hdr->addr,
-			hdr->size,
-			hdr->treturn);
-      int nStacks=0;
-      auto stIds=memRec.getStacks(&nStacks);
-    
-      for(int i=0;i<nStacks;i++){
-	buffPos+=snprintf(buff+buffPos,maxBuf-buffPos," %u",*(stIds+i));
-      }
-      buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,"\n");
-      writtenBytes=write(outFile,buff,buffPos);
-      if(writtenBytes!=buffPos){
-	if(writtenBytes==-1){
-	  handle_error("write failed");
-	}
-	fprintf(stderr,"Buffer written partially\n");
+#endif
+#ifdef BZip2_FOUND    
+  case(_USE_BZLIB_COMPRESSION_):
+    {
+      try{
+	r=new FOM_mallocHook::BZip2Writer(inpName);
+      }catch(const std::exception &ex){
+	fprintf(stderr,"Caught exception %s\n",ex.what());
 	exit(EXIT_FAILURE);
       }
-      totBytes+=writtenBytes;
-      buffPos=0;
-      nrecords++;
+      break;
     }
-    rc=clock_gettime(CLOCK_MONOTONIC,&tend);
-    delete rdr;
-    long ds=(tend.tv_sec-tstart.tv_sec);
-    long dns=(tend.tv_nsec-tstart.tv_nsec);
-    if(dns<0){
-      ds--;
-      dns+=1000000000;
+#endif
+
+#ifdef LibLZMA_FOUND    
+  case(_USE_LZMA_COMPRESSION_):
+    {
+      try{
+	r=new FOM_mallocHook::LZMAWriter(inpName);
+      }catch(const std::exception &ex){
+	fprintf(stderr,"Caught exception %s\n",ex.what());
+	exit(EXIT_FAILURE);
+      }
+      break;
     }
-    dns=dns/1000000.;
-    printf("Read %ld records and written %lu bytes to %s in %lu.%03lu seconds\n",nrecords,totBytes,outName.c_str(),ds,dns);
+#endif
+ default:
+   {
+     try{
+       r=new FOM_mallocHook::Reader(inpName);   
+     }catch(const std::exception &ex){
+       fprintf(stderr,"Caught exception %s\n",ex.what());
+       exit(EXIT_FAILURE);
+     }
+     break;
+   }
   }
+  
+  size_t nRecords=r->size();
+  printf("Starting conversion of %ld records\n",nRecords);
+  for(size_t t=0;t<nRecords;t++){
+    auto memRec=r->at(t);
+    auto hdr=memRec.getHeader();
+    buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,
+		      "%lu %u 0x%lx %lu %lu %lu",
+		      hdr->tstart,
+		      hdr->allocType,
+		      hdr->addr, 
+		      hdr->size, 
+		      hdr->treturn,
+		      hdr->tend);
+    size_t nStacks=0;
+    auto stIds=memRec.getStacks(&nStacks);
+    for(int i=0;i<nStacks;i++){
+      buffPos+=snprintf(buff+buffPos,maxBuf-buffPos," %u",*(stIds+i));
+    }
+    buffPos+=snprintf(buff+buffPos,maxBuf-buffPos,"\n");
+    writtenBytes=write(outFile,buff,buffPos);
+    if(writtenBytes!=buffPos){
+      if(writtenBytes==-1){
+	handle_error("write failed");
+      }
+      fprintf(stderr,"Buffer written partially\n");
+      exit(EXIT_FAILURE);
+    }
+    totBytes+=writtenBytes;
+    buffPos=0;
+    nrecords++;
+  }
+  clock_gettime(CLOCK_MONOTONIC,&tend);
+  delete r;
+  long ds=(tend.tv_sec-tstart.tv_sec);
+  long dns=(tend.tv_nsec-tstart.tv_nsec);
+  if(dns<0){
+    ds--;
+    dns+=1000000000;
+  }
+  dns=dns/1000000.;
+  printf("Read %ld records and written %lu bytes to %s in %lu.%03lu seconds\n",nrecords,totBytes,outName.c_str(),ds,dns);
   return 0;
 
 }
