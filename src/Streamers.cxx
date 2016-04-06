@@ -1254,9 +1254,9 @@ const FOM_mallocHook::RecordIndex FOM_mallocHook::ZlibReader::at(size_t t){
     //}
   const auto& bucketIndex=m_bucketIndices.at(bucket);
   if(bucket==m_currBucket) return m_recordsInCurrBuffer->at(t-bucketIndex.rStart);
-  auto oldB=std::lower_bound(m_buffers.begin(),m_buffers.end(),m_buffers.back()
-			     ,[bucket](const BuffRec& a,const BuffRec&b )->bool{return a.bucketIndex<bucket;});
-  if(oldB->bucketIndex==bucket){
+  auto oldB=std::lower_bound(m_buffers.begin(),m_buffers.end(),bucket,
+			     [](const BuffRec& a,const size_t b )->bool{return a.bucketIndex<b;});
+  if((oldB!=m_buffers.end()) && (oldB->bucketIndex==bucket)){
     m_currBucket=bucket;
     m_recordsInCurrBuffer=oldB->records;
     //oldB->lastUse=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();

@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cstdint>
 #include <map>
+#include <unordered_map>
 #include <deque>
 #include <tuple>
 #include <sstream>
@@ -54,11 +55,14 @@ size_t convert(const std::string inpName,const std::string output,
 #endif
   const size_t nrecords=rdr->size();
   //configuration variables
+
   const size_t maxLookAheadTime=1000l*1000l*1000l*LAwindow;//in nanoseconds;
   const size_t DensityWindow=1000l*DWindow;//1000000 ns->1 ms running window
   const size_t DHalf=DensityWindow/2;
-  std::multimap<size_t,FreeRecord> freeMap;//map to keep free calls key is address, tuple is pos in reader,TCorr,TOff
+  //std::multimap<size_t,FreeRecord> freeMap;//map to keep free calls key is address, tuple is pos in reader,TCorr,TOff
+  std::unordered_map<size_t,std::deque<FreeRecord>*> freeMap;
   //  std::deque<std::pair<size_t,size_t> > freeStack;
+
   uint64_t T0=0;
   uint64_t T1=0;
   uint64_t T2=0;
@@ -105,7 +109,9 @@ size_t convert(const std::string inpName,const std::string output,
   uint64_t lastTOffset=0;
   uint64_t lastTCorr=0;
   size_t skipCount=0;
+  std::deque<std::deque<FreeRecord>*> queueStack;
   auto tstart=std::chrono::steady_clock::now();
+  size_t tableSize=0;
   for(size_t i=0;i<nrecords;i++){
     auto r=rdr->at(i);
     T0  =r.getTStart();
@@ -149,41 +155,82 @@ size_t convert(const std::string inpName,const std::string output,
       Locality=addr-addrLast;
       addrLast=addr;
     }
+    //std::cout<<" processing "<<addr<<" at pos "<<i<<" "<<(unsigned)alloc_type<<std::endl;
     if(alloc_type!=0){
       uint64_t TMax=TCorr+maxLookAheadTime;
       if(lastTCorr<TMax){// I don't need to check if last entry in the map is already further than lookahead buffer
-	auto mapRange=freeMap.equal_range(addr);
-	if(mapRange.first==freeMap.end()){//address is not in map
+	// auto mapRange=freeMap.equal_range(addr);
+	// if(mapRange.first==freeMap.end()){//address is not in map
+	auto mapit=freeMap.find(addr);
+	if(mapit==freeMap.end()){
+	  //std::cout<<"Addr "<<addr<<" not in map"<<std::endl;
 	  size_t currIdx=lastFreeIndex+1;
 	  if(currIdx<nrecords){
 	    auto ra=rdr->at(currIdx);
 	    uint64_t aoff=lastTOffset;
 	    uint64_t aT0=ra.getTStart();
 	    uint64_t aTCorr=aT0-TStart-lastTOffset;
-	    if(ra.getAllocType()==0 && ra.getAddr()==addr){
+	    auto raadr=ra.getAddr();
+	    if(ra.getAllocType()==0 && raadr==addr){
 	      LifeTime=aTCorr-TCorr;
 	      //size_t fad=ra.getAddr();
 	      lastFreeIndex=currIdx;
 	      lastTOffset=aoff+ra.getTEnd()-aT0;
 	      lastTCorr=aTCorr;
 	    }else{
-	      while((aTCorr<TMax ||(freeMap.size()<mapLen)) && currIdx<(nrecords-1)){
+	      //std::deque<FreeRecord>* dq=0;
+	      std::unordered_map<size_t,std::deque<FreeRecord>*>::iterator rit;
+	      if(ra.getAllocType()==0 && raadr!=0){
+		rit=freeMap.find(raadr);
+		if(rit!=freeMap.end()){
+		  rit->second->emplace_back(currIdx,aTCorr,aoff);
+		}else{
+		  std::deque<FreeRecord> *dq=0;
+		  if(queueStack.size()){
+		    dq=queueStack.front();
+		    queueStack.pop_front();
+		  }else{
+		    dq=new std::deque<FreeRecord>();
+		  }
+		  dq->emplace_back(currIdx,aTCorr,aoff);
+		  tableSize++;
+		  //std::cout<<"Inserting addr "<<raadr<<" to map"<<std::endl;
+		  freeMap.insert({raadr,dq});
+		}
+	      }
+	      std::deque<FreeRecord> *dq=0;
+	      while((aTCorr<TMax ||(tableSize<mapLen)) && currIdx<(nrecords-1)){
 		currIdx++;
 		aoff+=ra.getTEnd()-aT0;
 		ra=rdr->at(currIdx);
 		aT0=ra.getTStart();
 		aTCorr=aT0-TStart-aoff;
-		if(ra.getAllocType()==0){
+		raadr=ra.getAddr();
+		if(ra.getAllocType()==0 && raadr!=0){
 		  // size_t fad=ra.getAddr();
 		  // freeStack.emplace_back(std::make_pair(fad,currIdx));
 		  lastFreeIndex=currIdx;
 		  lastTOffset=aoff+ra.getTEnd()-aT0;
 		  lastTCorr=aTCorr;
-		  if(ra.getAddr()==addr){
+		  if(raadr==addr){
 		    LifeTime=aTCorr-TCorr;
 		    break;
 		  }
-		  freeMap.emplace(std::make_pair(addr,FreeRecord(currIdx,aTCorr,aoff)));
+		  rit=freeMap.find(raadr);
+		  if(rit==freeMap.end()){
+		    if(queueStack.size()){
+		      dq=queueStack.front();
+		      queueStack.pop_front();
+		    }else{
+		      dq=new std::deque<FreeRecord>();
+		    }
+		    //std::cout<<"Inserting addr "<<raadr<<" to map"<<std::endl;
+		    dq->emplace_back(currIdx,aTCorr,aoff);
+		    freeMap.insert({raadr,dq});
+		  }else{
+		    rit->second->emplace_back(currIdx,aTCorr,aoff);
+		  }
+		  tableSize++;
 		}
 	      }
 	      if(aTCorr>=TMax){
@@ -198,19 +245,45 @@ size_t convert(const std::string inpName,const std::string output,
 	  //     break;
 	  //   }
 	  // }
-	  LifeTime=mapRange.first->second.TCorr-TCorr;
-	  freeMap.erase(mapRange.first);
+	  //std::cout<<"Found address "<<addr<<" in map"<<std::endl;
+	  auto dq=mapit->second;
+	  LifeTime=dq->front().TCorr-TCorr;
+	  dq->pop_front();
+	  tableSize--;
+	  if(dq->size()==0){
+	    queueStack.push_back(dq);
+	    freeMap.erase(mapit);
+	    //std::cout<<"Erasing addr "<<addr<<" from map"<<std::endl;	    
+	  }
 	}
-      }else{
-	skipCount++;
+      }else{//table already contains entries further than max window
+	auto rit=freeMap.find(addr);
+	if(rit!=freeMap.end()){
+	  auto dq=rit->second;
+	  if(!dq || dq->size()==0){
+	    std::cerr<<"Error queue is broken size= "<<dq->size()<<" front= "<<(void*)(&(dq->front()))<<std::endl;
+	  }
+	  LifeTime=dq->front().TCorr-TCorr;
+	  dq->pop_front();
+	  tableSize--;
+	  if(dq->size()==0){
+	    queueStack.push_back(dq);
+	    freeMap.erase(rit);
+	  }
+	}else{
+	  skipCount++;
+	}
       }
     }
     t.Fill();    
     if(i%marker==0){
+      size_t bucketCount=freeMap.bucket_count();
+      float lf=freeMap.max_load_factor();
       std::cout<<ticker<<" percent complete in "
 	       <<std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now()-tstart).count()
 	       <<" s ( "<<i<<" records, "<<TCorr<<" ns in to the data collection MapSize="<<freeMap.size()
-	       <<" skipCount="<<skipCount<< " )"<<std::endl;
+	       <<" entry count= "<<tableSize<<" skipCount="<<skipCount
+	       <<" numHashBuckets="<<bucketCount<<" loadFactor="<<lf<<" )"<<std::endl;
       ticker++;
     }
   }
