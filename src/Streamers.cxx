@@ -1234,24 +1234,8 @@ const FOM_mallocHook::RecordIndex FOM_mallocHook::ZlibReader::at(size_t t){
     throw std::length_error(bu);
   }
   size_t bucket=t/m_avgRecordsPerBucket;
-  // size_t bucket=(::fabs(m_currBucket-avgbucket)<20?m_currBucket:avgbucket);
-  //size_t bucket=m_currBucket;
-  //  if(((m_bucketIndices.at(bucket).rStart>t) || m_bucketIndices.at(bucket).rEnd<t)){
-  //   bucket--;
-  //   while(m_bucketIndices.at(bucket).rStart>t)bucket--;
-  // }else if(m_bucketIndices.at(bucket).rEnd<t){
-  //   bucket++;
-  //   while(m_bucketIndices.at(bucket).rEnd<t)bucket++;
-  // }
   auto buck=std::lower_bound(m_bucketIndices.begin(),m_bucketIndices.end(),t,[](const BucketIndex&a, const size_t &b)->bool{return a.rEnd<b;});
   if((buck->rEnd>=t)&&(buck->rStart<=t))bucket=std::distance(m_bucketIndices.begin(),buck);
-  // std::cout<<"asked for "<<t<<" avgbucket= "<<(size_t)(t/m_avgRecordsPerBucket)
-  // 	   <<" found bucket= "<<bucket<<" start="
-  // 	   <<buck->rStart<<" end= "<<buck->rEnd
-  // 	   <<" Current bucket="<< m_currBucket
-  // 	   <<std::endl;
-  
-    //}
   const auto& bucketIndex=m_bucketIndices.at(bucket);
   if(bucket==m_currBucket) return m_recordsInCurrBuffer->at(t-bucketIndex.rStart);
   auto oldB=std::lower_bound(m_buffers.begin(),m_buffers.end(),bucket,
@@ -1259,9 +1243,8 @@ const FOM_mallocHook::RecordIndex FOM_mallocHook::ZlibReader::at(size_t t){
   if((oldB!=m_buffers.end()) && (oldB->bucketIndex==bucket)){
     m_currBucket=bucket;
     m_recordsInCurrBuffer=oldB->records;
-    //oldB->lastUse=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     return m_recordsInCurrBuffer->at(t-bucketIndex.rStart);
-  }else{
+  }else{// Need new buffer
     BucketStats* bs=(BucketStats*)bucketIndex.bucketStart;
     size_t buffLen=bs->uncompressedSize;
     BuffRec* cb=0;
