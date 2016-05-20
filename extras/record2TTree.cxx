@@ -44,12 +44,12 @@ size_t convert(const std::string inpName,const std::string output,
     rdr=new FOM_mallocHook::IndexingReader(inpName,bucketLength);
   }
 #ifdef ZLIB_FOUND
-  else if((fs->getCompression()>>24)==_USE_ZLIB_COMPRESSION_){
+  else if((fs->getCompression()/10000000)==_USE_ZLIB_COMPRESSION_){
     rdr=new FOM_mallocHook::ZlibReader(inpName,bucketLength);
   }
 #endif
 #ifdef BZip2_FOUND
-  else if((fs->getCompression()>>24)==_USE_BZLIB_COMPRESSION_){
+  else if((fs->getCompression()/10000000)==_USE_BZLIB_COMPRESSION_){
     rdr=new FOM_mallocHook::BZip2Reader(inpName,bucketLength);
   }
 #endif

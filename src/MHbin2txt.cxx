@@ -131,7 +131,7 @@ int main(int argc,char* argv[]){
   fs->read(inpFile,false);
   close(inpFile);
   FOM_mallocHook::ReaderBase* r=0;
-  int compressionMode=((fs->getCompression())>>24); //higher 8 bits for compression mode
+  int compressionMode=((fs->getCompression())/10000000); //higher 8 bits for compression mode
   switch(compressionMode){
   case(0):
     {

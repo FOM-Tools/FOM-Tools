@@ -426,7 +426,7 @@ FOM_mallocHook::WriterBase* getWriter(){
   }
   
   FOM_mallocHook::WriterBase *w=0;
-  int compressionMode=(compress>>24); //higher 8 bits for compression mode
+  int compressionMode=(compress/10000000); //higher 8 bits for compression mode
   switch(compressionMode){
   case(0):
     {

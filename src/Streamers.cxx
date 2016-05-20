@@ -1017,6 +1017,10 @@ void FOM_mallocHook::ZlibWriter::writeRecord(const MemRecord&r){
   size_t lenRecord=sizeof(*hdr)+sizeof(FOM_mallocHook::index_t)*nStacks;
   if(lenRecord>=(m_bucketSize-m_bucketOffset)){
     compressBuffer();
+    auto h=const_cast<FOM_mallocHook::header*>(hdr);
+    h->tstart+=m_bs.compressionTime;
+    h->treturn+=m_bs.compressionTime;
+    h->tend+=m_bs.compressionTime;
   }
   m_nRecords++;
   m_nRecordsInBuffer++;
@@ -1032,12 +1036,15 @@ void FOM_mallocHook::ZlibWriter::writeRecord(const RecordIndex&r){
 }
  
 void FOM_mallocHook::ZlibWriter::writeRecord(const void *r){
-  const auto  hdr=(FOM_mallocHook::header*)r;
+  auto  hdr=(FOM_mallocHook::header*)r;
   size_t nStacks=hdr->count;
   //auto stIds=((FOM_mallocHook::index_t*)(hdr+1));
   size_t lenRecord=sizeof(*hdr)+sizeof(FOM_mallocHook::index_t)*nStacks;  
   if(lenRecord>=(m_bucketSize-m_bucketOffset)){
     compressBuffer();
+    hdr->tstart+=m_bs.compressionTime;
+    hdr->treturn+=m_bs.compressionTime;
+    hdr->tend+=m_bs.compressionTime;
   }
   m_nRecords++;
   m_nRecordsInBuffer++;
@@ -1195,6 +1202,7 @@ FOM_mallocHook::ZlibReader::ZlibReader(std::string fileName,uint nUncompBuckets)
     nRec2+=(br->itemsInBucket*br->itemsInBucket);
     cb.rEnd=nRecords-1;
     cb.tOffset=currTimeSkew;
+    //printf("bucket= %07lu rstart= %lu rend= %lu itemsIn= %lu cTime= %lu cSkew= %lu\n",count,cb.rStart,cb.rEnd,br->itemsInBucket,br->compressionTime,currTimeSkew);
     currTimeSkew+=br->compressionTime;
     count++;
     h=((char*)(br+1))+br->compressedSize;
@@ -1274,7 +1282,13 @@ const FOM_mallocHook::RecordIndex FOM_mallocHook::ZlibReader::at(size_t t){
     uint count=0;
     m_recordsInCurrBuffer=cb->records;
     m_recordsInCurrBuffer->resize(bs->itemsInBucket);
+    // if(bucket<10){
+    //   printf("Uncompressed bucket %lu time offset is=%lu\n",bucket,ct); 
+    // }
     while((void*)h<(cb->bucketBuff+buffLen)){
+      // if(bucket<10){
+      // 	printf("record %lu, tstart= %lu tend=%lu corrected tstart= %lu tend= %lu\n",count+bucketIndex.rStart,h->tstart,h->tend,h->tstart-ct,h->tend-ct);
+      // }
       h->tstart-=ct;
       h->treturn-=ct;
       h->tend-=ct;
