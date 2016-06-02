@@ -71,7 +71,7 @@ size_t convert(const std::string inpName,const std::string output,
   uint64_t TStart=0;
   int64_t Variation=0;
   int64_t Locality=0;
-  uint64_t LifeTime=0;
+  int64_t LifeTime=0;
   int64_t addrLast=0;
   int64_t sizeLast=0;
   uint64_t Density=0;
@@ -85,12 +85,12 @@ size_t convert(const std::string inpName,const std::string output,
   t.Branch("T1",&T1,"T1/l");
   t.Branch("T2",&T2,"T2/l");
   t.Branch("TCorrected",&TCorr,"TCorr/l");
-  t.Branch("Address",&addr,"addr/l");
+  t.Branch("Address",&addr,"Addr/l");
   t.Branch("AType",&alloc_type,"alloc_type/b");
   t.Branch("Density",&Density,"Density/l");
-  t.Branch("LifeTime",&LifeTime,"LifeTime/l");
+  t.Branch("Lifetime",&LifeTime,"Lifetime/L");
   t.Branch("Locality",&Locality,"Locality/L");
-  t.Branch("Size",&size,"size/l");
+  t.Branch("Size",&size,"Size/l");
   t.Branch("Variation",&Variation,"Variation/L");
   t.Branch("Stacks",&stacks);
   //t.Branch("stacks","vector<unsigned int>",&stacks);
