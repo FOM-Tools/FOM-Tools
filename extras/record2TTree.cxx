@@ -59,9 +59,7 @@ size_t convert(const std::string inpName,const std::string output,
   const size_t maxLookAheadTime=1000l*1000l*1000l*LAwindow;//in nanoseconds;
   const size_t DensityWindow=1000l*DWindow;//1000000 ns->1 ms running window
   const size_t DHalf=DensityWindow/2;
-  //std::multimap<size_t,FreeRecord> freeMap;//map to keep free calls key is address, tuple is pos in reader,TCorr,TOff
   std::unordered_map<size_t,std::deque<FreeRecord>*> freeMap;
-  //  std::deque<std::pair<size_t,size_t> > freeStack;
 
   uint64_t T0=0;
   uint64_t T1=0;
@@ -93,32 +91,36 @@ size_t convert(const std::string inpName,const std::string output,
   t.Branch("Size",&size,"Size/l");
   t.Branch("Variation",&Variation,"Variation/L");
   t.Branch("Stacks",&stacks);
-  //t.Branch("stacks","vector<unsigned int>",&stacks);
   size_t marker=nrecords/100;
   int ticker=0;
+
   auto initial=rdr->at(0);
-  TStart=initial.getTStart();
+  TStart=fs->getStartTime();
   addrLast=initial.getAddr();
   sizeLast=initial.getSize();
-  //size_t deltaOffset;
+
   size_t windowMin=0;
   size_t windowMax=0;
   uint64_t wlOffset=0;
   uint64_t whOffset=0;
   size_t lastFreeIndex=0;
-  uint64_t lastTOffset=0;
+  uint64_t lastTOffset=initial.getTEnd()-initial.getTStart();
   uint64_t lastTCorr=0;
   size_t skipCount=0;
   std::deque<std::deque<FreeRecord>*> queueStack;
   auto tstart=std::chrono::steady_clock::now();
   size_t tableSize=0;
+  //
+  // Start looping over file
+  //
+  std::cout<<"Starting to process the file. This will take some time"<<std::endl;
   for(size_t i=0;i<nrecords;i++){
     auto r=rdr->at(i);
     T0  =r.getTStart();
     T1  =r.getTReturn();
     T2  =r.getTEnd();
-    TCorr=T0-TStart-TOffset;
-    TOffset+=T2-T0;
+    TCorr=(T0-TStart-TOffset);
+    TOffset+=(T2-T0);
     addr   =r.getAddr();
     size   =r.getSize();
     alloc_type=r.getAllocType();
@@ -127,6 +129,8 @@ size_t convert(const std::string inpName,const std::string output,
     int64_t tmin=TCorr-DHalf;
     uint64_t wlT0=rmin.getTStart();
     int64_t wlTcorr=wlT0-TStart-wlOffset;
+    LifeTime=-1;
+
     while(wlTcorr<tmin){
       wlOffset+=rmin.getTEnd()-wlT0;
       windowMin++;
@@ -134,6 +138,7 @@ size_t convert(const std::string inpName,const std::string output,
       wlT0=rmin.getTStart();
       wlTcorr=wlT0-TStart-wlOffset;
     }
+
     if(windowMax<nrecords){
       auto rmax=rdr->at(windowMax);
       int64_t tmax=TCorr+DHalf;
@@ -155,15 +160,12 @@ size_t convert(const std::string inpName,const std::string output,
       Locality=addr-addrLast;
       addrLast=addr;
     }
-    //std::cout<<" processing "<<addr<<" at pos "<<i<<" "<<(unsigned)alloc_type<<std::endl;
+
     if(alloc_type!=0){
       uint64_t TMax=TCorr+maxLookAheadTime;
       if(lastTCorr<TMax){// I don't need to check if last entry in the map is already further than lookahead buffer
-	// auto mapRange=freeMap.equal_range(addr);
-	// if(mapRange.first==freeMap.end()){//address is not in map
 	auto mapit=freeMap.find(addr);
-	if(mapit==freeMap.end()){
-	  //std::cout<<"Addr "<<addr<<" not in map"<<std::endl;
+	if(mapit==freeMap.end()){//a matching free on adress was not seen previuously
 	  size_t currIdx=lastFreeIndex+1;
 	  if(currIdx<nrecords){
 	    auto ra=rdr->at(currIdx);
@@ -171,16 +173,14 @@ size_t convert(const std::string inpName,const std::string output,
 	    uint64_t aT0=ra.getTStart();
 	    uint64_t aTCorr=aT0-TStart-lastTOffset;
 	    auto raadr=ra.getAddr();
-	    if(ra.getAllocType()==0 && raadr==addr){
+	    if(raadr==addr && ra.getAllocType()==0 ){
 	      LifeTime=aTCorr-TCorr;
-	      //size_t fad=ra.getAddr();
 	      lastFreeIndex=currIdx;
 	      lastTOffset=aoff+ra.getTEnd()-aT0;
 	      lastTCorr=aTCorr;
 	    }else{
-	      //std::deque<FreeRecord>* dq=0;
 	      std::unordered_map<size_t,std::deque<FreeRecord>*>::iterator rit;
-	      if(ra.getAllocType()==0 && raadr!=0){
+	      if(ra.getAllocType()==0 && raadr!=0){//filter out free(0)
 		rit=freeMap.find(raadr);
 		if(rit!=freeMap.end()){
 		  rit->second->emplace_back(currIdx,aTCorr,aoff);
@@ -194,7 +194,6 @@ size_t convert(const std::string inpName,const std::string output,
 		  }
 		  dq->emplace_back(currIdx,aTCorr,aoff);
 		  tableSize++;
-		  //std::cout<<"Inserting addr "<<raadr<<" to map"<<std::endl;
 		  freeMap.insert({raadr,dq});
 		}
 	      }
@@ -206,9 +205,7 @@ size_t convert(const std::string inpName,const std::string output,
 		aT0=ra.getTStart();
 		aTCorr=aT0-TStart-aoff;
 		raadr=ra.getAddr();
-		if(ra.getAllocType()==0 && raadr!=0){
-		  // size_t fad=ra.getAddr();
-		  // freeStack.emplace_back(std::make_pair(fad,currIdx));
+		if(ra.getAllocType()==0 && raadr!=0 ){
 		  lastFreeIndex=currIdx;
 		  lastTOffset=aoff+ra.getTEnd()-aT0;
 		  lastTCorr=aTCorr;
@@ -224,7 +221,6 @@ size_t convert(const std::string inpName,const std::string output,
 		    }else{
 		      dq=new std::deque<FreeRecord>();
 		    }
-		    //std::cout<<"Inserting addr "<<raadr<<" to map"<<std::endl;
 		    dq->emplace_back(currIdx,aTCorr,aoff);
 		    freeMap.insert({raadr,dq});
 		  }else{
@@ -239,13 +235,6 @@ size_t convert(const std::string inpName,const std::string output,
 	    }
 	  }
 	}else{//found address in map
-	  // for(auto l=freeStack.rbegin();l!=freeStack.rend();l++){
-	  //   if(l->first==std::get<0>(mapRange.first->second)){
-	  //     freeStack.erase(--(l.base()));
-	  //     break;
-	  //   }
-	  // }
-	  //std::cout<<"Found address "<<addr<<" in map"<<std::endl;
 	  auto dq=mapit->second;
 	  LifeTime=dq->front().TCorr-TCorr;
 	  dq->pop_front();
@@ -253,7 +242,6 @@ size_t convert(const std::string inpName,const std::string output,
 	  if(dq->size()==0){
 	    queueStack.push_back(dq);
 	    freeMap.erase(mapit);
-	    //std::cout<<"Erasing addr "<<addr<<" from map"<<std::endl;	    
 	  }
 	}
       }else{//table already contains entries further than max window
@@ -287,7 +275,6 @@ size_t convert(const std::string inpName,const std::string output,
       ticker++;
     }
   }
-  //t.FlushBaskets();
   t.Write();
   f.Close();
   return nrecords;
